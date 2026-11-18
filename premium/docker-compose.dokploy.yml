@@ -1,0 +1,10 @@
+# Apply after docker-compose.yml. Dokploy routes the premium hostname to api:8000.
+services:
+  api:
+    networks:
+      - default
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true

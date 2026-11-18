@@ -1,0 +1,15 @@
+.venv/
+.venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+.env.*
+!.env.example
+!.env.dokploy.example
+var/
+test-results/
+*.db
+*.db-shm
+*.db-wal
+.coverage

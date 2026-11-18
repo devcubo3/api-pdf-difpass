@@ -1,0 +1,63 @@
+name: Premium API and legacy compatibility
+on:
+  push:
+    paths:
+      - 'premium/**'
+      - '.github/workflows/premium.yml'
+  pull_request:
+    paths:
+      - 'premium/**'
+      - '.github/workflows/premium.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: difftravel_test
+          POSTGRES_USER: difftravel_test
+          POSTGRES_PASSWORD: ci-only-not-production
+        ports: ['5432:5432']
+        options: --health-cmd="pg_isready -U difftravel_test" --health-interval=5s --health-timeout=5s --health-retries=10
+    env:
+      PDF_TEST_DATABASE_URL: postgresql+psycopg://difftravel_test:ci-only-not-production@localhost:5432/difftravel_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-por tesseract-ocr-eng
+      - run: python -m pip install -r premium/requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -q --junitxml=var/test-results/ci.xml
+        working-directory: premium
+      - run: python scripts/smoke_canonical_http.py --browser-channel chromium
+        working-directory: premium
+      - name: Validate premium compose
+        run: docker compose -f premium/docker-compose.yml -f premium/docker-compose.dokploy.yml config --quiet
+        env:
+          DATABASE_URL: postgresql+psycopg://difftravel_premium:ci-only@db:5432/difftravel_premium
+          POSTGRES_PASSWORD: ci-only
+          PDF_API_TOKENS: '{}'
+          OPENAI_API_KEY: synthetic-no-provider-access
+      - run: docker build -t difftravel-premium:ci premium
+      - name: Exercise sandboxed Chromium inside deployment image
+        run: |
+          docker run --rm --init --network none --cap-drop ALL --read-only --tmpfs /tmp:size=512m,mode=1777 --shm-size=256m --security-opt no-new-privileges:true --security-opt seccomp=premium/seccomp-chromium.json difftravel-premium:ci python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(chromium_sandbox=True); page=b.new_page(); page.set_content('<p>SYNTHETIC CONTAINER TEST</p>'); assert page.pdf().startswith(b'%PDF-'); b.close(); p.stop(); print('Sandboxed PDF renderer passed')"
+      - name: Verify legacy dependencies and HTTP contract
+        run: |
+          python -m venv /tmp/difftravel-legacy-ci
+          /tmp/difftravel-legacy-ci/bin/python -m pip install -r requirements.txt
+          /tmp/difftravel-legacy-ci/bin/python -m uvicorn api_pdf:app --host 127.0.0.1 --port 8099 --no-access-log > /tmp/difftravel-legacy-ci.log 2>&1 &
+          legacy_pid=$!
+          trap 'kill "$legacy_pid" 2>/dev/null || true' EXIT
+          python premium/scripts/smoke_legacy_http.py --base-url http://127.0.0.1:8099
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: premium-tests
+          path: premium/var/test-results/*.xml

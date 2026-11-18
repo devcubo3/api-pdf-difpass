@@ -1,0 +1,101 @@
+name: difftravel-pdf-premium
+
+x-app: &app
+  image: ${PDF_IMAGE_REF:-difftravel-pdf-premium:local}
+  build: .
+  user: '10001:10001'
+  environment: &app-env
+    DATABASE_URL: ${DATABASE_URL:?Configure DATABASE_URL no .env}
+    PDF_API_TOKENS: ${PDF_API_TOKENS:?Configure PDF_API_TOKENS no .env}
+    PDF_DATA_DIR: /app/var
+    PDF_REVIEW_POLICY: always
+    PDF_RENDER_MODE: ${PDF_RENDER_MODE:-openai_images}
+    PDF_HTML_BROWSER_CHANNEL: ${PDF_HTML_BROWSER_CHANNEL:-}
+    PDF_PIPELINE_VERSION: ${PDF_PIPELINE_VERSION:-legacy}
+    PDF_MAX_OUTPUT_PAGES: ${PDF_MAX_OUTPUT_PAGES:-100}
+    PDF_LEGACY_PDF_HOSTS: '${PDF_LEGACY_PDF_HOSTS:-}'
+    PDF_REQUIRE_LEGACY_PDF_URL: ${PDF_REQUIRE_LEGACY_PDF_URL:-false}
+    PDF_PUBLIC_BASE_URL: ${PDF_PUBLIC_BASE_URL:-}
+    PDF_ORIGINAL_LINK_TTL_DAYS: ${PDF_ORIGINAL_LINK_TTL_DAYS:-365}
+    PDF_MEDIA_MODE: ${PDF_MEDIA_MODE:-brand}
+    PDF_MEDIA_OPENAI_SEARCH_ENABLED: ${PDF_MEDIA_OPENAI_SEARCH_ENABLED:-false}
+    PDF_MEDIA_SEARCH_RESERVE_USD: ${PDF_MEDIA_SEARCH_RESERVE_USD:-0.05}
+    PDF_MEDIA_SEARCH_DAILY_BUDGET_USD: ${PDF_MEDIA_SEARCH_DAILY_BUDGET_USD:-0.10}
+    PDF_AI_DOCUMENT_BUDGET_USD: ${PDF_AI_DOCUMENT_BUDGET_USD:-12}
+    PDF_AI_DAILY_BUDGET_USD: ${PDF_AI_DAILY_BUDGET_USD:-24}
+    BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+    PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+    PDF_RENDER_DPI: '240'
+    PDF_WORKER_TIMEOUT_SECONDS: ${PDF_WORKER_TIMEOUT_SECONDS:-600}
+    OPENAI_IMAGE_MODEL: ${OPENAI_IMAGE_MODEL:-gpt-image-2}
+    OPENAI_IMAGE_QUALITY: ${OPENAI_IMAGE_QUALITY:-high}
+    OPENAI_IMAGE_SIZE: ${OPENAI_IMAGE_SIZE:-1536x2176}
+  volumes:
+    - documents:/app/var
+  restart: unless-stopped
+  depends_on:
+    db:
+      condition: service_healthy
+  security_opt:
+    - no-new-privileges:true
+    - seccomp=./seccomp-chromium.json
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+  mem_limit: 2g
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '3'
+services:
+  api:
+    <<: *app
+    environment:
+      <<: *app-env
+      # Server-side key only; needed for the optional reviewer web-search route.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - '127.0.0.1:${PDF_HOST_PORT:-8001}:8000'
+  worker:
+    <<: *app
+    environment:
+      <<: *app-env
+      PDF_API_TOKENS: '{}'
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Configure OPENAI_API_KEY no ambiente privado}
+      OPENAI_TEXT_MODEL: gpt-6-luna
+      PDF_AI_MAX_PAGES: '16'
+      PDF_AI_REQUEST_TIMEOUT_SECONDS: '180'
+    command: ['python', '-m', 'app.worker']
+    stop_grace_period: 20s
+    healthcheck:
+      test: ['CMD', 'python', '-c', "from pathlib import Path; import time; p=Path('/app/var/worker-heartbeat.json'); assert p.exists() and time.time()-p.stat().st_mtime < 120"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+  db:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: difftravel_premium
+      POSTGRES_USER: difftravel_premium
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no .env}
+    volumes:
+      - database:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U difftravel_premium -d difftravel_premium']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+volumes:
+  documents:
+  database:

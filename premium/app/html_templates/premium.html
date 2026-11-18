@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>{{ title }}</title>
+<style>
+@font-face {font-family:Diff;src:url('{{ font_regular }}');font-weight:400}
+@font-face {font-family:Diff;src:url('{{ font_bold }}');font-weight:700}
+@page {size:A4;margin:0}
+:root {--navy:#073b55;--copper:#b94f18;--ink:#233e4a;--muted:#647680;--green:#16734a;--red:#b73535}
+* {box-sizing:border-box}
+html,body {margin:0;padding:0;background:#fff;color:var(--ink);font-family:Diff,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sheet {position:relative;width:210mm;height:297mm;display:flex;flex-direction:column;background:linear-gradient(125deg,#fcfaf6,#fff 70%);break-after:page;overflow:hidden}
+.sheet:last-child {break-after:auto}
+.hero {position:relative;height:62mm;flex:0 0 62mm;background:#fcfaf6}
+.photo-frame {position:absolute;inset:0}
+.photo-frame.photograph {left:36%}
+.scene {display:block;width:100%;height:100%;object-fit:cover;object-position:50% 61%}
+.photograph .scene {object-position:50% 42%}
+/* Opaque brand plate keeps the original diagonal over the photograph. */
+.hero:after {content:'';position:absolute;inset:0 auto 0 0;width:44%;background:#fcfaf6;clip-path:polygon(0 0,100% 0,80% 100%,0 100%);z-index:1}
+.brand {position:absolute;left:11mm;top:8mm;width:45mm;height:21mm;object-fit:contain;z-index:2}
+.promise {position:absolute;left:13mm;top:35mm;width:67mm;color:var(--navy);font-size:9.2pt;line-height:1.4;letter-spacing:.1pt;z-index:2}
+.promise strong {display:block;font-weight:700}
+/* The PNG has transparent padding below the soles; align the visible feet. */
+.mascot {position:absolute;left:58mm;bottom:4.5mm;width:23mm;height:29mm;object-fit:contain;object-position:center bottom;z-index:2}
+.wave {position:absolute;bottom:-.2mm;width:100%;height:10mm;left:0;z-index:3}
+.heading {padding:7mm 13mm 4mm;flex:0 0 auto}
+.eyebrow {margin:0 0 2mm;text-transform:uppercase;letter-spacing:1.3pt;font-size:7.6pt;color:var(--copper);font-weight:700}
+h1 {margin:0;color:var(--navy);font-size:26pt;line-height:1.12;letter-spacing:-.8pt;max-width:182mm;overflow-wrap:anywhere}
+.intro {font-size:9pt;line-height:1.5;margin:3mm 0 0;max-width:177mm;border-left:.8mm solid #c77843;padding:1mm 0 1mm 3mm;color:#526772}
+.content {flex:1;min-height:0;margin:0 13mm;position:relative}
+.top-grid {display:grid;grid-template-columns:minmax(0,1fr) 52mm;gap:3.5mm;align-items:start}
+.top-grid.no-code {grid-template-columns:1fr}
+.summary {display:grid;gap:3mm}
+.summary.paired {grid-template-columns:minmax(0,1.65fr) minmax(0,1fr);align-items:stretch}
+/* Use opaque borders, without blurred shadows around PDF cards. */
+.card {background:#fff;border:1px solid #dce5e7;border-radius:3.5mm;padding:0 4mm 3.4mm;break-inside:avoid;position:relative}
+.card h2 {margin:0 -4mm 2.5mm;padding:2.6mm 4mm;font-size:11pt;line-height:1.25;color:var(--navy);display:flex;align-items:center;gap:2.3mm;overflow-wrap:anywhere;background:linear-gradient(100deg,#edf3f5,#f8faf9);border-bottom:1px solid #e3eaeb;border-radius:3.5mm 3.5mm 0 0}
+.badge {display:inline-flex;align-items:center;justify-content:center;flex:0 0 6mm;width:6mm;height:6mm;background:#fff;border:1px solid #dbe7ea;border-radius:2mm;color:var(--navy)}
+.badge svg {width:4.1mm;height:4.1mm;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.card ul {margin:0;padding:0;list-style:none;font-size:9pt;line-height:1.5}
+.card li {position:relative;padding-left:3.8mm;margin:0 0 1.7mm;overflow-wrap:anywhere}
+.card li:last-child {margin-bottom:0}
+.card li:before {content:'';position:absolute;left:.7mm;top:1.7mm;width:.8mm;height:.8mm;border-radius:50%;background:var(--copper)}
+.card li.field-row {padding-left:0}
+.card li.field-row:before {display:none}
+.field {padding:2mm 2.6mm;background:#f4f7f7;border:1px solid #e7edee;border-radius:2mm;min-width:0}
+.field-label {display:block;font-size:7.2pt;line-height:1.35;font-weight:700;color:var(--muted);margin-bottom:.8mm}
+.field-value {display:block;font-size:9pt;line-height:1.45;color:var(--navy);overflow-wrap:anywhere}
+.field.reference {background:#f5f0e8;border-color:#eaddce}
+.reference .field-value {font-size:11pt;font-weight:700;color:#8e3d16;letter-spacing:.25pt}
+.field-pair {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2mm}
+strong[class^="emphasis-"] {font-weight:700;color:var(--navy)}
+strong.emphasis-money {color:#9d4318}
+strong.emphasis-restriction {color:#a52f32}
+.flight-route {display:grid;grid-template-columns:minmax(0,1fr) 9mm minmax(0,1fr);gap:3mm;align-items:start;margin-top:3mm}
+.terminal-label {display:block;text-transform:uppercase;font-size:7pt;font-weight:700;letter-spacing:.7pt;color:var(--muted);margin-bottom:1.5mm}
+.terminal-city {font-size:11pt;font-weight:700;color:var(--navy);overflow-wrap:anywhere}
+.terminal-code {font-size:9pt;color:var(--muted)}
+.terminal-time {display:block;font-size:23pt;font-weight:700;letter-spacing:-.5pt;color:var(--navy);line-height:1.25;margin-top:1mm}
+.flight-arrow {padding-top:8mm;color:var(--copper);font-size:19pt;text-align:center}
+.flight-facts {display:flex;gap:6mm;flex-wrap:wrap;margin-top:3mm;padding:2.5mm 3mm;border-radius:2mm;background:#f0f5f6;font-size:9pt;line-height:1.4}
+.flight-facts strong {font-weight:700;color:var(--navy);margin-left:1.2mm}
+.flight-airports {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6mm;margin-top:2.5mm;font-size:7.8pt;line-height:1.4;color:var(--muted)}
+.flight-airports span {display:block;overflow-wrap:anywhere}
+.flight-airports strong {display:block;font-size:7.3pt;font-weight:700;color:var(--ink);margin-bottom:.8mm}
+.flight-extra {margin-top:2.5mm!important}
+.included {border-color:#d1e4d8}
+.included h2 {color:#216443;background:linear-gradient(100deg,#eaf4ee,#f6faf7);border-bottom-color:#dcebe1}
+.included .badge {border-color:#d1e4d8;color:var(--green)}
+.included li:before {background:var(--green)}
+.attention {border-color:#ecdcd5}
+.attention h2 {color:#9c3d2c;background:linear-gradient(100deg,#f8eee8,#fcf8f4);border-bottom-color:#eddfd6}
+.attention .badge {border-color:#ead8cc;color:#a3442c}
+.attention li:before {background:#b95b36}
+.wide {margin-top:3mm}
+.qr-card {background:#fff;border:1px solid #e6e9e7;border-radius:4mm;padding:4mm 2mm 3.5mm;text-align:center;break-inside:avoid}
+.qr-kicker {font-size:6.7pt;letter-spacing:1.2pt;text-transform:uppercase;color:var(--copper);font-weight:700;margin-bottom:2mm}
+.code-box {width:46mm;height:46mm;margin:0 auto;background:#fff}
+.top-grid.wide-code {grid-template-columns:1fr}
+.wide-code .code-box {width:125mm;height:30mm;max-width:100%}
+.code-label {font-size:8pt;line-height:1.4;color:var(--navy);margin:2mm 0 0;font-weight:700}
+.footer {position:relative;flex:0 0 14mm;height:14mm;margin-top:4mm;padding:4mm 13mm 0;display:flex;justify-content:space-between;align-items:flex-start;font-size:7.2pt;color:var(--muted)}
+.footer:before {content:'';position:absolute;top:1mm;left:13mm;right:13mm;height:.3mm;background:linear-gradient(90deg,var(--copper) 0 14%,#dce4e5 14%)}
+.pagination {font-weight:700;color:var(--navy);letter-spacing:1pt}
+.photo-credit {display:block;font-size:7pt;line-height:1.3;margin-top:1mm;color:var(--muted);text-decoration:none;max-width:150mm}
+.footer.final {flex-basis:34mm;height:34mm;display:block}
+.closing {display:flex;gap:5mm;align-items:center;justify-content:space-between;margin-bottom:3mm;padding-top:1mm}
+.closing p {margin:0;max-width:107mm;font-size:8pt;line-height:1.45;color:var(--navy)}
+.original-download {display:inline-block;flex-shrink:0;background:var(--navy);color:#fff;border:.3mm solid var(--navy);border-radius:2mm;padding:2.8mm 3.8mm;font-size:8.5pt;font-weight:700;line-height:1.3;text-decoration:none}
+.download-expiry {display:block;font-size:6.6pt;line-height:1.4;color:var(--muted);text-align:right;margin-top:1mm}
+.footer-line {display:flex;justify-content:space-between;align-items:flex-start}
+.continuation .heading {padding-top:6mm}
+.compact .heading {padding-top:5mm;padding-bottom:3mm}
+.compact h1 {font-size:23pt}
+.compact .card {padding:0 3.2mm 2.7mm}
+.compact .card h2 {margin:0 -3.2mm 1.8mm;padding:1.8mm 3.2mm;font-size:10.2pt}
+.compact .card ul {font-size:9pt;line-height:1.4}
+.compact .card li {margin-bottom:1.2mm}
+.compact .field {padding:1.5mm 2mm}
+.compact .wide,.compact .summary {margin-top:2mm;gap:2mm}
+.compact .summary {margin-top:0}
+</style>
+</head>
+<body>
+{% macro rich(segments) -%}
+{%- for fragment in segments -%}{% if fragment.emphasis %}<strong class="emphasis-{{ fragment.emphasis }}">{{ fragment.text }}</strong>{% else %}{{ fragment.text }}{% endif %}{%- endfor -%}
+{%- endmacro %}
+{% macro field(entry) -%}
+<div class="field{% if entry.reference %} reference{% endif %}"><span class="field-label">{{ entry.label }}:</span><span class="field-value">{{ rich(entry.segments) }}</span></div>
+{%- endmacro %}
+{% macro bullets(entries,extra_class='') -%}
+<ul class="{{ extra_class }}">{% for entry in entries %}<li{% if entry.kind != 'text' %} class="field-row"{% endif %}>{% if entry.kind == 'paired' %}<div class="field-pair">{% for part in entry.fields %}{{ field(part) }}{% endfor %}</div>{% elif entry.kind == 'field' %}{{ field(entry.field) }}{% else %}{{ rich(entry.segments) }}{% endif %}</li>{% endfor %}</ul>
+{%- endmacro %}
+{% macro card(item) -%}
+{% set section = item.section %}
+<section class="card {{ section.tone }}{% if item.flight %} flight-card{% endif %}">
+<h2><span class="badge" aria-hidden="true">{{ icons[item.icon]|safe }}</span>{{ section.title }}</h2>
+{% if item.flight %}
+{% set flight = item.flight %}
+<div class="flight-route">
+<div class="flight-terminal"><span class="terminal-label">Saída</span><div class="terminal-city">{{ flight.departure.city }} <span class="terminal-code">({{ flight.departure.code }})</span></div><span class="terminal-time">{{ flight.departure.time }}</span></div>
+<div class="flight-arrow" aria-hidden="true">→</div>
+<div class="flight-terminal"><span class="terminal-label">Chegada</span><div class="terminal-city">{{ flight.arrival.city }} <span class="terminal-code">({{ flight.arrival.code }})</span></div><span class="terminal-time">{{ flight.arrival.time }}</span></div>
+</div>
+<div class="flight-facts"><span>Voo <strong>{{ flight.number }}</strong></span>{% if flight.duration %}<span>Duração <strong>{{ flight.duration }}</strong></span>{% endif %}</div>
+{% if flight.departure.airport or flight.arrival.airport %}<div class="flight-airports">
+<span>{% if flight.departure.airport %}<strong>Aeroporto de saída</strong>{{ flight.departure.airport }}{% endif %}</span>
+<span>{% if flight.arrival.airport %}<strong>Aeroporto de chegada</strong>{{ flight.arrival.airport }}{% endif %}</span>
+</div>{% endif %}
+{% if flight.extra %}{{ bullets(item.extra,'flight-extra') }}{% endif %}
+{% else %}{{ bullets(item.bullets) }}{% endif %}
+</section>
+{%- endmacro %}
+{% for item in pages %}
+<article class="sheet{% if loop.index > 1 %} continuation{% endif %}" data-plan-page="{{ loop.index }}">
+<header class="hero">
+<div class="photo-frame{% if photographic_hero %} photograph{% endif %}">{% if hero %}<img class="scene" src="{{ hero }}" alt="">{% endif %}</div>
+<img class="brand" src="{{ wordmark }}" alt="Diff Travel">
+<div class="promise">Viaje tranquilo, <strong>Nós cuidamos de Você!</strong></div>
+<img class="mascot" src="{{ mascot }}" alt="DifBot">
+<svg class="wave" viewBox="0 0 1000 80" preserveAspectRatio="none" aria-hidden="true"><path d="M0 5 C370 90 640 -35 1000 36 L1000 80 L0 80Z" fill="#b94f18"/><path d="M0 16 C370 96 640 -23 1000 47 L1000 80 L0 80Z" fill="#073b55"/><path d="M0 37 C370 112 640 -3 1000 65 L1000 80 L0 80Z" fill="#fcfaf6"/></svg>
+</header>
+<div class="heading"><p class="eyebrow">{{ item.page.eyebrow }}</p><h1>{{ item.page.title }}</h1>{% if item.page.introduction %}<p class="intro">{{ rich(item.introduction) }}</p>{% endif %}</div>
+<main class="content">
+<div class="top-grid{% if not item.page.code_id %} no-code{% elif item.wide_code %} wide-code{% endif %}">
+<div class="summary{% if item.paired %} paired{% endif %}">{% for entry in item.cards[:2] %}{{ card(entry) }}{% endfor %}</div>
+{% if item.page.code_id %}<aside class="qr-card"><div class="qr-kicker">Código original</div><div class="code-box" data-code-id="{{ item.page.code_id }}"></div><p class="code-label">{{ item.code_label }}</p></aside>{% endif %}
+</div>
+{% for entry in item.cards[2:] %}<div class="wide">{{ card(entry) }}</div>{% endfor %}
+</main>
+<footer class="footer{% if complete and loop.last %} final{% endif %}">
+{% if complete and loop.last %}<div class="closing"><p>Este documento foi gerado pela <strong>Diff Travel</strong> a partir do documento original do fornecedor.</p>{% if original_download %}<div><a class="original-download" href="{{ original_download.url }}">Baixar PDF original</a>{% if original_download.expires_label %}<span class="download-expiry">Link disponível até {{ original_download.expires_label }}</span>{% endif %}</div>{% endif %}</div>{% endif %}
+<div class="footer-line"{% if not (complete and loop.last) %} style="width:100%"{% endif %}><span>Viaje tranquilo, Nós cuidamos de Você!{% if photo_credit %}<a class="photo-credit" href="{{ photo_source }}">{{ photo_credit }}</a>{% endif %}</span><span class="pagination">{{ '%02d'|format(loop.index) }} / {{ '%02d'|format(total_pages) }}</span></div></footer>
+</article>
+{% endfor %}
+</body>
+</html>
