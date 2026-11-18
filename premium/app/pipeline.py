@@ -92,7 +92,7 @@ def process_claim(settings: Settings, row: dict) -> None:
         data['overrides'] = overrides
         data['generation_scope']=row['data_json'].get('generation_scope','full')
         for key in ('pipeline_version','legacy_pdf_url','understanding_snapshot','fact_overrides','requested_document_type',
-                    'ai_cache_only','ai_plan_cache_only','ai_cached_calls'):
+                    'ai_cache_only','ai_plan_cache_only','ai_cached_calls','release_policy'):
             if key in row['data_json']:
                 data[key]=row['data_json'][key]
         data['evidence']=extracted['pages']
@@ -103,6 +103,7 @@ def process_claim(settings: Settings, row: dict) -> None:
             data['editorial_version']=row['data_json']['editorial_version']
         media_asset=None
         selection=row['data_json'].get('media_selection')
+        automatic=data.get('release_policy','always')=='validated_auto'
         if selection:
             data['media_selection']=selection
         if row['data_json'].get('media_search'):
@@ -160,7 +161,25 @@ def process_claim(settings: Settings, row: dict) -> None:
                 else:
                     data['media_context']=legacy_context(data)
                 checkpoint('media')
-                if not selection and settings.media_mode=='search' and data['document_type']!='proposal':
+                if automatic and not (selection and selection.get('permission_confirmed')):
+                    # Do not pay to discover a photo that cannot be delivered.
+                    # Approval is scoped by tenant and an exact grounded place.
+                    selection=None
+                    data.pop('media_selection',None)
+                    data.pop('photo_provenance',None)
+                    try:
+                        approved=MediaCatalog(settings,row['tenant_id']).preapproved(primary_place(data))
+                        if approved:
+                            selection={'asset_id':approved['id'],'permission_confirmed':True,
+                                       'approval_scope':'configured_catalog'}
+                            data['media_selection']=selection
+                    except MediaError:
+                        selection=None
+                    if not selection:
+                        data['hero_asset']='premium-institutional.svg'
+                        extracted['issues'].append({'code':'MEDIA_INSTITUTIONAL','blocking':False,
+                            'message':'Arte institucional utilizada; nenhuma busca paga de foto foi solicitada.'})
+                if not automatic and not selection and settings.media_mode=='search' and data['document_type']!='proposal':
                     try:
                         place=primary_place(data)
                         if not place:
@@ -189,7 +208,7 @@ def process_claim(settings: Settings, row: dict) -> None:
                             'permission_confirmed':bool(selection.get('permission_confirmed'))}
                     except MediaError as exc:
                         if not canonical: raise
-                        selection=None; media_asset=None; data['hero_asset']=None
+                        selection=None; media_asset=None; data['hero_asset']='premium-institutional.svg' if automatic else None
                         data.pop('media_selection',None); data.pop('photo_provenance',None)
                         extracted['issues'].append({'code':exc.code,'blocking':False,
                             'message':'Foto selecionada indisponível; versão institucional utilizada.'})
@@ -198,7 +217,7 @@ def process_claim(settings: Settings, row: dict) -> None:
                         diagnostic=safe_error(exc,'media')
                         log.error('Optional selected media failed document=%s diagnostic=%s',row['id'],diagnostic)
                         data['media_diagnostic']=diagnostic
-                        selection=None; media_asset=None; data['hero_asset']=None
+                        selection=None; media_asset=None; data['hero_asset']='premium-institutional.svg' if automatic else None
                         data.pop('media_selection',None); data.pop('photo_provenance',None)
                         extracted['issues'].append({'code':'MEDIA_ENRICHMENT_FAILED','blocking':False,
                             'message':'Foto selecionada indisponível; versão institucional utilizada.'})
@@ -268,6 +287,9 @@ def process_claim(settings: Settings, row: dict) -> None:
         if not checks['codes_valid']:
             issues.append({'code': 'CODE_VERIFICATION_FAILED', 'blocking': True,
                            'message': 'A conferência do código no PDF final falhou.'})
+        if automatic and any(call['status']!='completed' for call in BudgetLedger(db,row).summary()):
+            issues.append({'code':'AI_CALL_UNCERTAIN','blocking':True,
+                           'message':'Há uma chamada de IA não concluída; conferir antes de liberar.'})
         checks['blocking_issues'] = sum(bool(i.get('blocking')) for i in issues)
         checks['source_blocks'] = sum(len(p['blocks']) for p in extracted['pages'])
         checks['composed_blocks'] = (sum(len(s.get('sources', [s])) for s in data['sections'])
@@ -278,14 +300,23 @@ def process_claim(settings: Settings, row: dict) -> None:
         # Source evidence remains private and is never embedded in the PDF.
         data['evidence'] = extracted['pages']
         data['codes'] = [{k:v for k,v in c.items() if k != 'path'} for c in extracted['codes']]
-        data['processing_stage']='review'
         history = dict(row['artifacts_json'].get('history', {}))
         artifacts = {**rendered, 'checks': checks, 'sha256': checks['pdf_sha256'], 'history': history}
         artifacts['page_sha256'] = [hashlib.sha256(Path(p).read_bytes()).hexdigest()
                                     for p in rendered['page_paths']]
-        db.update_document(row['id'], row['tenant_id'], row['etag'], status='needs_review',
+        from .release import automatic_release_event,ReleaseBlocked
+        try:
+            event=automatic_release_event(settings,store,row,data,artifacts,issues)
+        except ReleaseBlocked:
+            event=None
+            issues.append({'code':'AUTO_RELEASE_INTEGRITY','blocking':True,
+                           'message':'A integridade final exige conferência; entrega automática bloqueada.'})
+            checks['blocking_issues']+=1
+            checks['validations_passed']=False
+        data['processing_stage']='ready' if event else 'review'
+        db.update_document(row['id'], row['tenant_id'], row['etag'], status='ready' if event else 'needs_review',
                            data_json=data, artifacts_json=artifacts, issues_json=issues,
-                           doc_type=data['document_type'])
+                           doc_type=data['document_type'],review_event=event)
     except (AIError,MediaError) as exc:
         try:
             failure_data=locals().get('data', {})

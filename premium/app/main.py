@@ -254,7 +254,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @api.get('/healthz')
     def health():
         return {'status': 'ok', 'version': '2.0.0', 'render_mode':settings.render_mode,
-                'pipeline_version':settings.pipeline_version,'html_engine':settings.html_engine}
+                'pipeline_version':settings.pipeline_version,'html_engine':settings.html_engine,
+                'review_policy':settings.review_policy}
 
     @api.get('/readyz')
     def ready():
@@ -285,7 +286,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                principal=Depends(require('upload'))):
         if not idempotency_key or len(idempotency_key) > 200:
             raise HTTPException(400, 'Idempotency-Key deve ter entre 1 e 200 caracteres.')
-        if settings.require_legacy_pdf_url and not legacy_pdf_url:
+        if (settings.require_legacy_pdf_url or settings.review_policy=='validated_auto') and not legacy_pdf_url:
             raise HTTPException(422,'Informe a URL do PDF padrão para o botão de download.')
         try:
             legacy_pdf_url=validate_legacy_url(settings,principal['tenant_id'],legacy_pdf_url)
@@ -324,6 +325,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     idempotency_key=idempotency_key, fingerprint=fingerprint,
                     initial_data={'generation_scope':generation_scope,'public_context_version':2,'editorial_version':2,
                                   'pipeline_version':settings.pipeline_version,'legacy_pdf_url':legacy_pdf_url,
+                                  'release_policy':settings.review_policy,
                                   'requested_document_type':document_type})
             except IdempotencyConflict:
                 source.unlink(missing_ok=True)
@@ -744,15 +746,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409, 'Decisão não corresponde ao rascunho atual.')
         if body.action == 'approve':
             if not body.artifact_sha256:
-                raise HTTPException(409, 'Aprovação exige um artefato final conferido.')
-            if not artifacts.get('checks', {}).get('validations_passed'):
-                raise HTTPException(409, 'Há verificações bloqueantes; não é possível aprovar.')
+                raise HTTPException(409,'Aprovação exige um artefato final conferido.')
+            from .release import verified_artifact,ReleaseBlocked
             try:
-                current_hash = hashlib.sha256(storage.read(artifacts['pdf_path'])).hexdigest()
-            except OSError:
-                raise HTTPException(409, 'Artefato indisponível.') from None
-            if current_hash != body.artifact_sha256:
-                raise HTTPException(409, 'O artefato mudou; aprovação bloqueada.')
+                verified_artifact(storage,artifacts,expected_sha=body.artifact_sha256)
+            except ReleaseBlocked as error:
+                raise HTTPException(409,str(error)) from None
         elif not body.reason or not body.reason.strip():
             raise HTTPException(422, 'Informe o motivo da rejeição.')
         result = update(row, status='ready' if body.action == 'approve' else 'failed',

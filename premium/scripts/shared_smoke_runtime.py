@@ -129,7 +129,11 @@ class SharedRuntime:
         self.docker('restart', '--time', '35', self.name)
         self.wait_healthy(client, base)
         saved = client.get(base+route+'/review').json()
-        assert saved['artifact_sha256'] == sha and saved['status'] == 'needs_review'
+        expected_status='ready' if self.env.get('PDF_REVIEW_POLICY')=='validated_auto' else 'needs_review'
+        assert saved['artifact_sha256'] == sha and saved['status'] == expected_status
+        if expected_status=='ready':
+            delivered=client.get(base+route+'/pdf')
+            assert delivered.status_code==200 and hashlib.sha256(delivered.content).hexdigest()==sha
         artifact = client.get(base+route+'/review/pdf')
         assert artifact.status_code == 200 and hashlib.sha256(artifact.content).hexdigest() == sha
         self.legacy_check(base)

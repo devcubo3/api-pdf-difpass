@@ -266,6 +266,7 @@ def image_variants(url):
 class MediaCatalog:
     def __init__(self,settings,tenant_id):
         self.settings=settings
+        self.tenant_id=tenant_id
         self.store=Storage(settings.data_dir)
         self.tenant=hashlib.sha256(tenant_id.encode()).hexdigest()
         self.root=self.store._contained(self.store.root/'media'/self.tenant)
@@ -292,6 +293,17 @@ class MediaCatalog:
     @staticmethod
     def public(metadata):
         return {key:value for key,value in metadata.items() if key!='path'}
+
+    def preapproved(self,place):
+        if not place:
+            return None
+        normalize=lambda value:' '.join((value or '').casefold().split())
+        for entry in self.settings.media_auto_catalog.get(self.tenant_id,[]):
+            if (normalize(entry['name'])==normalize(place.get('name'))
+                and normalize(entry['locality'])==normalize(place.get('locality'))):
+                asset=self.load(entry['asset_id'])
+                return asset
+        return None
 
     def save_photo(self,fetched,source,score):
         host=urlsplit(fetched.url).hostname or ''

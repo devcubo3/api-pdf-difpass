@@ -37,6 +37,7 @@ class Settings:
     media_openai_search_enabled: bool = False
     media_search_reserve_usd: float = .05
     media_search_daily_budget_usd: float = .10
+    media_auto_catalog_json: str = field(default='{}', repr=False)
     openai_text_model: str = 'gpt-6-luna'
     openai_image_model: str = 'gpt-image-2'
     openai_image_quality: str = 'high'
@@ -73,8 +74,11 @@ class Settings:
                 raise ValueError(f"{name} must be a positive integer")
         if not 120 <= self.render_dpi <= 300:
             raise ValueError("render_dpi must be between 120 and 300")
-        if self.review_policy != "always":
-            raise ValueError("Only review_policy='always' is supported in this pilot")
+        if self.review_policy not in {'always','validated_auto'}:
+            raise ValueError('review_policy (PDF_REVIEW_POLICY) must be always or validated_auto')
+        if self.review_policy=='validated_auto' and (self.render_mode!='html_template' or self.pipeline_version!='canonical_v1'):
+            raise ValueError('validated_auto requires html_template and canonical_v1')
+        self.media_auto_catalog
         if self.render_mode not in {'local', 'openai_images', 'html_template'}:
             raise ValueError('render_mode must be local, openai_images or html_template')
         if self.pipeline_version not in {'legacy','canonical_v1'}:
@@ -107,6 +111,25 @@ class Settings:
         if not self.database_url:
             raise ValueError("DATABASE_URL cannot be empty")
         self.api_tokens  # Validate without printing the secret-bearing input.
+
+    @property
+    def media_auto_catalog(self):
+        try:
+            import re
+            catalog=json.loads(self.media_auto_catalog_json)
+            if not isinstance(catalog,dict): raise ValueError()
+            for tenant,entries in catalog.items():
+                if not isinstance(tenant,str) or not tenant or not isinstance(entries,list) or len(entries)>200:
+                    raise ValueError()
+                for entry in entries:
+                    if (not isinstance(entry,dict) or set(entry)!={'asset_id','name','locality'}
+                        or not isinstance(entry['asset_id'],str) or not re.fullmatch(r'[0-9a-f]{64}',entry['asset_id'])
+                        or not isinstance(entry['name'],str) or not 1<=len(entry['name'])<=250
+                        or entry['locality'] is not None and (not isinstance(entry['locality'],str) or not 1<=len(entry['locality'])<=250)):
+                        raise ValueError()
+            return catalog
+        except (ValueError,TypeError):
+            raise ValueError('PDF_MEDIA_AUTO_CATALOG requires tenant lists of asset_id, name and locality') from None
 
     @property
     def api_tokens(self) -> dict[str, dict[str, Any]]:
@@ -162,6 +185,7 @@ class Settings:
             media_openai_search_enabled=os.getenv('PDF_MEDIA_OPENAI_SEARCH_ENABLED','false').lower()=='true',
             media_search_reserve_usd=float(os.getenv('PDF_MEDIA_SEARCH_RESERVE_USD','.05')),
             media_search_daily_budget_usd=float(os.getenv('PDF_MEDIA_SEARCH_DAILY_BUDGET_USD','.10')),
+            media_auto_catalog_json=os.getenv('PDF_MEDIA_AUTO_CATALOG') or '{}',
             openai_text_model=os.getenv('OPENAI_TEXT_MODEL', 'gpt-6-luna'),
             openai_image_model=os.getenv('OPENAI_IMAGE_MODEL', 'gpt-image-2'),
             openai_image_quality=os.getenv('OPENAI_IMAGE_QUALITY','high'),

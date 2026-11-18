@@ -164,7 +164,7 @@ strong.emphasis-restriction {color:#a52f32}
 </main>
 <footer class="footer{% if complete and loop.last %} final{% endif %}">
 {{ measure_box(prefix ~ '-footer') }}
-{% if complete and loop.last %}<div class="closing"><p>Este documento foi gerado pela <strong>Diff Travel</strong> a partir do documento original do fornecedor.</p>{% if original_download %}<div><a class="original-download" href="{{ original_download.url }}">Baixar PDF original</a>{% if original_download.expires_label %}<span class="download-expiry">Link disponível até {{ original_download.expires_label }}</span>{% endif %}</div>{% endif %}</div>{% endif %}
+{% if complete and loop.last %}<div class="closing"><p>Este documento foi gerado pela <strong>Diff Travel</strong> a partir do documento original do fornecedor.</p>{% if original_download %}<div><a class="original-download" href="{{ original_download.url }}">{% if original_download.kind|default('')=='legacy_pdf' %}Baixar PDF de segurança{% else %}Baixar PDF original{% endif %}</a>{% if original_download.expires_label %}<span class="download-expiry">Link disponível até {{ original_download.expires_label }}</span>{% endif %}</div>{% endif %}</div>{% endif %}
 <div class="footer-line"{% if not (complete and loop.last) %} style="width:100%"{% endif %}><span>Viaje tranquilo, Nós cuidamos de Você!{% if photo_credit %}<a class="photo-credit" href="{{ photo_source }}">{{ photo_credit }}</a>{% endif %}</span><span class="pagination">{{ '%02d'|format(loop.index) }} / {{ '%02d'|format(total_pages) }}</span></div></footer>
 </article>
 {% endfor %}

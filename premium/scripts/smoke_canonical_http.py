@@ -30,6 +30,7 @@ def main():
     parser.add_argument('--output-dir',type=Path)
     parser.add_argument('--shared-image', help='Exercise both APIs and the worker in this Docker image')
     parser.add_argument('--html-engine',choices=['chromium','weasyprint'],default='chromium')
+    parser.add_argument('--review-policy',choices=['always','validated_auto'],default='always')
     parser.add_argument('--browser-channel',choices=['chrome','msedge','chromium'],
                         default='chrome' if os.name=='nt' else 'chromium')
     args=parser.parse_args()
@@ -102,6 +103,8 @@ def main():
         'PDF_RENDER_MODE':'html_template','PDF_HTML_ENGINE':args.html_engine,'PDF_PIPELINE_VERSION':'canonical_v1','PDF_HTML_BROWSER_CHANNEL':
             '' if args.browser_channel=='chromium' else args.browser_channel,
         'PDF_PUBLIC_BASE_URL':base,'PDF_MEDIA_MODE':'brand','PDF_WORKER_TIMEOUT_SECONDS':'600',
+        'PDF_REVIEW_POLICY':args.review_policy,
+        'PDF_LEGACY_PDF_HOSTS':json.dumps({'synthetic':['files.example.test']}),
         'PDF_AI_DOCUMENT_BUDGET_USD':'0.20','PDF_AI_DAILY_BUDGET_USD':'0.20'})
     processes=[]; logs=[]; shared=None
     def start(name,command,child_env):
@@ -127,8 +130,13 @@ def main():
                 if time.monotonic()>deadline: raise RuntimeError('Synthetic API startup timeout')
                 time.sleep(.2)
             upload=client.post(base+'/v2/documents',headers={'Idempotency-Key':'synthetic-http-v1'},
+                data={'legacy_pdf_url':'https://files.example.test/safety.pdf'},
                 files={'input_pdf':('source-synthetic.pdf',source,'application/pdf')})
             assert upload.status_code==202
+            duplicate=client.post(base+'/v2/documents',headers={'Idempotency-Key':'synthetic-http-v1'},
+                data={'legacy_pdf_url':'https://files.example.test/safety.pdf'},
+                files={'input_pdf':('source-synthetic.pdf',source,'application/pdf')})
+            assert duplicate.status_code==202 and duplicate.json()['document_id']==upload.json()['document_id']
             route=base+'/v2/documents/'+upload.json()['document_id']
             worker_env={**env,'PDF_API_TOKENS':'{}'}
             worker=None if shared else start('worker',['-m','app.worker','--once'],worker_env)
@@ -147,7 +155,13 @@ def main():
             for number in range(1,review['checks']['rendered_pages']+1):
                 page=client.get(route+f'/pages/{number}.png'); assert page.status_code==200
                 (output/f'page-{number:03d}.png').write_bytes(page.content)
-            assert client.get(route+'/pdf').status_code==409
+            delivered=client.get(route+'/pdf')
+            if args.review_policy=='validated_auto':
+                assert review['status']=='ready'
+                assert review['events'][-1]['action']=='automatic_release'
+                assert delivered.status_code==200 and delivered.content==artifact.content
+            else:
+                assert review['status']=='needs_review' and delivered.status_code==409
             assert len(provider_calls)==1
             if worker:
                 worker.wait(timeout=10); assert worker.returncode==0
@@ -156,7 +170,9 @@ def main():
                 assert len(provider_calls)==1
             report={'kind':'synthetic-http-smoke','generation':'api-and-separate-worker',
                 'provider':'local_test_double','real_provider_calls':0,'local_premium_pdf_generation':False,
-                'human_approval_performed':False,'pipeline_version':'canonical_v1','result':'passed',
+                'human_approval_performed':False,'review_policy':args.review_policy,
+                'automatic_release_performed':args.review_policy=='validated_auto',
+                'pipeline_version':'canonical_v1','result':'passed',
                 'document_type':'car_rental','pages':review['checks']['rendered_pages'],
                 'artifact_sha256':review['artifact_sha256'],'checks':review['checks'],
                 'issues':review['issues'],'test_double_requests':len(provider_calls),

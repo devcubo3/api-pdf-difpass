@@ -24,7 +24,7 @@ from .typography import emphasis_segments,bullet_view
 from .hotel_preservation import preserve_hotel_data
 from .media_context import primary_place
 
-TEMPLATE_VERSION = 'difftravel-html-v13-portable-vector-header'
+TEMPLATE_VERSION = 'difftravel-html-v14-safety-download'
 TEMPLATE_DIR = Path(__file__).parent / 'html_templates'
 ICONS = {
     'neutral':'<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>',
@@ -92,8 +92,8 @@ def build_html(plan, codes, data, brand_dir: Path, scope='full',media_asset=None
                       'introduction':emphasis_segments(page.introduction,page.critical_values)})
     # Never load a path or URL supplied in document text or a model response.
     hero_name = data.get('hero_asset')
-    allowed = {'premium-orlando.png', 'premium-campos.png', 'premium-comandatuba.png', 'premium-dif-pass.png'}
-    hero = data_uri(brand_dir/hero_name, 'image/png') if hero_name in allowed else None
+    allowed = {'premium-orlando.png', 'premium-campos.png', 'premium-comandatuba.png', 'premium-dif-pass.png','premium-institutional.svg'}
+    hero = data_uri(brand_dir/hero_name, 'image/svg+xml' if hero_name.endswith('.svg') else 'image/png') if hero_name in allowed else None
     if media_asset:
         path=Path(media_asset['path'])
         if hashlib.sha256(path.read_bytes()).hexdigest()!=media_asset['sha256']:
