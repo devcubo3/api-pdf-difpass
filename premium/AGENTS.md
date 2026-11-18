@@ -9,3 +9,4 @@
 - Real customer PDF acceptance uses HTTP and a separate worker. Synthetic tests may use an explicit fake provider.
 - Preserve the completed/uncertain provider ledger and use cached rebuilds for layout changes.
 - The Bubble integration requires separate authorization. Inspect it read-only until that authorization is given.
+- The user authorized validated automatic premium delivery on 2026-11-18. Keep manual review as the default; the opt-in policy must preserve evidence, codes, layout, source/artifact hashes, safety-file URL validation and atomic audit/publication. Never approve historical manual jobs retroactively.

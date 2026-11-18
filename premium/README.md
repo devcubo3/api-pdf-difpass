@@ -1,5 +1,11 @@
 # Diff Travel Premium PDF API
 
+`PDF_REVIEW_POLICY=validated_auto` enables automatic delivery only for complete
+HTML/canonical documents passing evidence, code, layout, integrity and safety-link
+checks. The default `always` preserves manual review and historical jobs. The
+Bubble integration must persist the safety and premium files before promoting
+the main download. See [automatic delivery contract](docs/AUTOMATIC_RELEASE.md).
+
 HTML composition supports explicit `PDF_HTML_ENGINE=chromium` or
 `PDF_HTML_ENGINE=weasyprint`. WeasyPrint 70.0 renders the same branded template
 without a browser or custom container sandbox profile. Chromium retains its
