@@ -84,3 +84,22 @@ jobs:
           legacy_pid=$!
           trap 'kill "$legacy_pid" 2>/dev/null || true' EXIT
           /tmp/difftravel-legacy-ci/bin/python premium/scripts/smoke_legacy_http.py --base-url http://127.0.0.1:8099
+  shared-service:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r premium/requirements-dev.txt
+      - run: docker build -f premium/Dockerfile.shared -t difftravel-shared:ci .
+      - name: Exercise both APIs, worker recovery and persisted restart in one service
+        run: python scripts/smoke_canonical_http.py --shared-image difftravel-shared:ci --browser-channel chromium
+        working-directory: premium
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-service-test-report
+          path: |
+            premium/var/test-results/canonical-http-*/report.json
+            premium/var/test-results/canonical-http-*/*.log

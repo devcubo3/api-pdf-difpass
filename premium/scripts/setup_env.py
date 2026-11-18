@@ -5,7 +5,9 @@ import secrets
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--docker', action='store_true')
+mode = parser.add_mutually_exclusive_group()
+mode.add_argument('--docker', action='store_true')
+mode.add_argument('--shared-service', action='store_true')
 args = parser.parse_args()
 target = Path('.env')
 tokens = {secrets.token_urlsafe(32): {'tenant_id':'difftravel', 'subject':'premium-local',
@@ -33,6 +35,20 @@ if not args.docker:
         content += f'TESSERACT_CMD={tesseract.as_posix()}\n'
     if all((languages / f'{language}.traineddata').is_file() for language in ('por', 'eng')):
         content += f'TESSDATA_PREFIX={languages.as_posix()}\n'
+if args.shared_service:
+    lines = dict(line.split('=', 1) for line in content.splitlines() if '=' in line)
+    lines.update({
+        'PDF_PREMIUM_ENABLED':'true', 'PORT':'8000', 'PDF_DATA_DIR':'/app/var',
+        'DATABASE_URL':'sqlite:////app/var/state.sqlite3',
+        'PDF_RENDER_MODE':'html_template', 'PDF_PIPELINE_VERSION':'canonical_v1',
+        'PDF_WORKER_TIMEOUT_SECONDS':'600', 'PDF_AI_DOCUMENT_BUDGET_USD':'0.15',
+        'PDF_AI_DAILY_BUDGET_USD':'0.30', 'PDF_MEDIA_MODE':'search',
+        'PDF_MEDIA_OPENAI_SEARCH_ENABLED':'true', 'PDF_MEDIA_SEARCH_RESERVE_USD':'0.05',
+        'PDF_MEDIA_SEARCH_DAILY_BUDGET_USD':'0.10',
+    })
+    lines.pop('TESSERACT_CMD', None)
+    lines.pop('TESSDATA_PREFIX', None)
+    content = '\n'.join(f'{key}={value}' for key, value in lines.items()) + '\n'
 with target.open('x', encoding='utf-8') as stream:
     stream.write(content)
 try:

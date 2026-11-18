@@ -7,6 +7,7 @@ __pycache__/
 .env.*
 !.env.example
 !.env.dokploy.example
+!.env.shared.example
 var/
 test-results/
 *.db

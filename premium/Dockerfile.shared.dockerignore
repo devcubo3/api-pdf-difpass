@@ -1,0 +1,22 @@
+# Positive build allowlist: customer sources, keys and runtime data are excluded.
+**
+!api_pdf.py
+!requirements.txt
+!assets/
+!assets/**
+!premium/
+!premium/requirements.txt
+!premium/app/
+!premium/app/**
+!premium/assets/
+!premium/assets/**
+!premium/shared_service/
+!premium/shared_service/**
+**/__pycache__/
+**/*.pyc
+**/.env
+**/.env.*
+**/var/
+**/*.pdf
+**/*.db
+**/*.sqlite*

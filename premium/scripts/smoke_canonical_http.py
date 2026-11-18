@@ -28,6 +28,7 @@ from reportlab.pdfgen import canvas
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir',type=Path)
+    parser.add_argument('--shared-image', help='Exercise both APIs and the worker in this Docker image')
     parser.add_argument('--browser-channel',choices=['chrome','msedge','chromium'],
                         default='chrome' if os.name=='nt' else 'chromium')
     args=parser.parse_args()
@@ -86,7 +87,7 @@ def main():
                 self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw)
             except Exception:
                 self.send_response(400); self.end_headers()
-    provider=ThreadingHTTPServer(('127.0.0.1',0),Provider)
+    provider=ThreadingHTTPServer(('0.0.0.0' if args.shared_image else '127.0.0.1',0),Provider)
     thread=threading.Thread(target=provider.serve_forever,daemon=True); thread.start()
     with socket.socket() as port_socket:
         port_socket.bind(('127.0.0.1',0)); api_port=port_socket.getsockname()[1]
@@ -101,16 +102,21 @@ def main():
             '' if args.browser_channel=='chromium' else args.browser_channel,
         'PDF_PUBLIC_BASE_URL':base,'PDF_MEDIA_MODE':'brand','PDF_WORKER_TIMEOUT_SECONDS':'600',
         'PDF_AI_DOCUMENT_BUDGET_USD':'0.20','PDF_AI_DAILY_BUDGET_USD':'0.20'})
-    processes=[]; logs=[]
+    processes=[]; logs=[]; shared=None
     def start(name,command,child_env):
         log=(output/(name+'.log')).open('wb'); logs.append(log)
         process=subprocess.Popen([sys.executable,*command],cwd=root,env=child_env,stdout=log,stderr=log,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,start_new_session=os.name!='nt')
         processes.append(process); return process
     try:
-        api=start('api',['-m','uvicorn','app.main:app','--host','127.0.0.1','--port',str(api_port),'--no-access-log'],env)
+        if args.shared_image:
+            from shared_smoke_runtime import SharedRuntime
+            shared=SharedRuntime(args.shared_image,env,output,api_port)
+            api=shared.start()
+        else:
+            api=start('api',['-m','uvicorn','app.main:app','--host','127.0.0.1','--port',str(api_port),'--no-access-log'],env)
         with httpx.Client(trust_env=False,timeout=30,headers={'Authorization':'Bearer '+token}) as client:
-            deadline=time.monotonic()+30
+            deadline=time.monotonic()+60
             while True:
                 if api.poll() is not None: raise RuntimeError('Synthetic API startup failed; inspect private log')
                 try:
@@ -124,7 +130,7 @@ def main():
             assert upload.status_code==202
             route=base+'/v2/documents/'+upload.json()['document_id']
             worker_env={**env,'PDF_API_TOKENS':'{}'}
-            worker=start('worker',['-m','app.worker','--once'],worker_env)
+            worker=None if shared else start('worker',['-m','app.worker','--once'],worker_env)
             started=time.monotonic(); deadline=started+90
             while True:
                 review=client.get(route+'/review').json()
@@ -141,17 +147,28 @@ def main():
                 (output/f'page-{number:03d}.png').write_bytes(page.content)
             assert client.get(route+'/pdf').status_code==409
             assert len(provider_calls)==1
-            worker.wait(timeout=10); assert worker.returncode==0
+            if worker:
+                worker.wait(timeout=10); assert worker.returncode==0
+            if shared:
+                shared.verify_recovery(client,base,route.removeprefix(base),review['artifact_sha256'])
+                assert len(provider_calls)==1
             report={'kind':'synthetic-http-smoke','generation':'api-and-separate-worker',
                 'provider':'local_test_double','real_provider_calls':0,'local_premium_pdf_generation':False,
                 'human_approval_performed':False,'pipeline_version':'canonical_v1','result':'passed',
                 'document_type':'car_rental','pages':review['checks']['rendered_pages'],
                 'artifact_sha256':review['artifact_sha256'],'checks':review['checks'],
-                'issues':review['issues'],'test_double_requests':len(provider_calls)}
+                'issues':review['issues'],'test_double_requests':len(provider_calls),
+                'single_service':bool(shared),'restart_preserved_artifact':bool(shared)}
             (output/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
             print(json.dumps({'result':'passed','provider':'local_test_double','real_provider_calls':0,
                 'pages':report['pages'],'report':str(output/'report.json')},ensure_ascii=False))
+        if shared:
+            shared.close(); shared=None
+            from shared_smoke_runtime import verify_fallbacks
+            verify_fallbacks(args.shared_image,env,output,api_port)
     finally:
+        if shared:
+            shared.close()
         for process in reversed(processes):
             if process.poll() is None:
                 if os.name=='nt':

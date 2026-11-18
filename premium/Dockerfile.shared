@@ -1,0 +1,22 @@
+# Build from the repository root; select this Dockerfile on the EXISTING service.
+FROM python:3.12-slim-bookworm
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends nginx-light supervisor tini tesseract-ocr tesseract-ocr-por tesseract-ocr-eng ca-certificates && rm -rf /var/lib/apt/lists/*
+# Independent virtual environments preserve the legacy dependency contract.
+COPY requirements.txt /tmp/legacy-requirements.txt
+COPY premium/requirements.txt /tmp/premium-requirements.txt
+RUN python -m venv /opt/legacy && /opt/legacy/bin/pip install --no-cache-dir -r /tmp/legacy-requirements.txt
+RUN python -m venv /opt/premium && /opt/premium/bin/pip install --no-cache-dir -r /tmp/premium-requirements.txt
+RUN /opt/premium/bin/python -m playwright install --with-deps chromium && chmod -R a+rX /ms-playwright
+RUN useradd --uid 10001 --create-home app && mkdir -p /app/var && chown app:app /app/var && chmod 700 /app/var
+COPY api_pdf.py ./
+COPY assets ./assets
+COPY premium/app ./premium/app
+COPY premium/assets ./premium/assets
+COPY premium/shared_service ./premium/shared_service
+USER app
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD ["/opt/premium/bin/python", "/app/premium/shared_service/health.py"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/opt/premium/bin/python", "/app/premium/shared_service/start.py"]
