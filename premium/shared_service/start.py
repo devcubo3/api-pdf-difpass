@@ -105,15 +105,29 @@ def prepare_premium():
         database.create_schema()
     finally:
         database.engine.dispose()
-    from playwright.sync_api import sync_playwright
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(chromium_sandbox=True)
-            browser.close()
+        validate_html_runtime(settings)
     except Exception as error:
         lock.close()
-        raise StartupFailure('browser', browser_failure_code(error), type(error).__name__) from None
+        raise
     return lock
+
+
+def validate_html_runtime(settings):
+    if settings.html_engine=='weasyprint':
+        try:
+            from app.weasy_rendering import check_runtime
+            check_runtime()
+        except Exception as error:
+            raise StartupFailure('html_engine','HTML_ENGINE_UNAVAILABLE',type(error).__name__) from None
+    else:
+        from playwright.sync_api import sync_playwright
+        try:
+            with sync_playwright() as p:
+                browser=p.chromium.launch(chromium_sandbox=True)
+                browser.close()
+        except Exception as error:
+            raise StartupFailure('browser',browser_failure_code(error),type(error).__name__) from None
 
 
 def nginx_config(port, premium_available):

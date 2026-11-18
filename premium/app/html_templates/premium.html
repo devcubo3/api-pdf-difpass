@@ -19,14 +19,16 @@ html,body {margin:0;padding:0;background:#fff;color:var(--ink);font-family:Diff,
 .scene {display:block;width:100%;height:100%;object-fit:cover;object-position:50% 61%}
 .photograph .scene {object-position:50% 42%}
 /* Opaque brand plate keeps the original diagonal over the photograph. */
-.hero:after {content:'';position:absolute;inset:0 auto 0 0;width:44%;background:#fcfaf6;clip-path:polygon(0 0,100% 0,80% 100%,0 100%);z-index:1}
+.brand-plate {position:absolute;left:0;top:0;width:44%;height:100%;z-index:1}
+.measure-point {position:absolute;width:0;height:0;font-size:0;line-height:0}
+.measure-start {left:0;top:0}.measure-end {right:0;bottom:0}
 .brand {position:absolute;left:11mm;top:8mm;width:45mm;height:21mm;object-fit:contain;z-index:2}
 .promise {position:absolute;left:13mm;top:35mm;width:67mm;color:var(--navy);font-size:9.2pt;line-height:1.4;letter-spacing:.1pt;z-index:2}
 .promise strong {display:block;font-weight:700}
 /* The PNG has transparent padding below the soles; align the visible feet. */
 .mascot {position:absolute;left:58mm;bottom:4.5mm;width:23mm;height:29mm;object-fit:contain;object-position:center bottom;z-index:2}
 .wave {position:absolute;bottom:-.2mm;width:100%;height:10mm;left:0;z-index:3}
-.heading {padding:7mm 13mm 4mm;flex:0 0 auto}
+.heading {padding:7mm 13mm 4mm;flex:0 0 auto;position:relative}
 .eyebrow {margin:0 0 2mm;text-transform:uppercase;letter-spacing:1.3pt;font-size:7.6pt;color:var(--copper);font-weight:700}
 h1 {margin:0;color:var(--navy);font-size:26pt;line-height:1.12;letter-spacing:-.8pt;max-width:182mm;overflow-wrap:anywhere}
 .intro {font-size:9pt;line-height:1.5;margin:3mm 0 0;max-width:177mm;border-left:.8mm solid #c77843;padding:1mm 0 1mm 3mm;color:#526772}
@@ -78,12 +80,12 @@ strong.emphasis-restriction {color:#a52f32}
 .wide {margin-top:3mm}
 .qr-card {background:#fff;border:1px solid #e6e9e7;border-radius:4mm;padding:4mm 2mm 3.5mm;text-align:center;break-inside:avoid}
 .qr-kicker {font-size:6.7pt;letter-spacing:1.2pt;text-transform:uppercase;color:var(--copper);font-weight:700;margin-bottom:2mm}
-.code-box {width:46mm;height:46mm;margin:0 auto;background:#fff}
+.code-box {width:46mm;height:46mm;margin:0 auto;background:#fff;position:relative}
 .top-grid.wide-code {grid-template-columns:1fr}
 .wide-code .code-box {width:125mm;height:30mm;max-width:100%}
 .code-label {font-size:8pt;line-height:1.4;color:var(--navy);margin:2mm 0 0;font-weight:700}
 .footer {position:relative;flex:0 0 14mm;height:14mm;margin-top:4mm;padding:4mm 13mm 0;display:flex;justify-content:space-between;align-items:flex-start;font-size:7.2pt;color:var(--muted)}
-.footer:before {content:'';position:absolute;top:1mm;left:13mm;right:13mm;height:.3mm;background:linear-gradient(90deg,var(--copper) 0 14%,#dce4e5 14%)}
+.footer:before {content:'';position:absolute;top:1mm;left:13mm;right:13mm;height:.3mm;background:linear-gradient(90deg,var(--copper) 0,var(--copper) 14%,#dce4e5 14%,#dce4e5 100%)}
 .pagination {font-weight:700;color:var(--navy);letter-spacing:1pt}
 .photo-credit {display:block;font-size:7pt;line-height:1.3;margin-top:1mm;color:var(--muted);text-decoration:none;max-width:150mm}
 .footer.final {flex-basis:34mm;height:34mm;display:block}
@@ -114,9 +116,13 @@ strong.emphasis-restriction {color:#a52f32}
 {% macro bullets(entries,extra_class='') -%}
 <ul class="{{ extra_class }}">{% for entry in entries %}<li{% if entry.kind != 'text' %} class="field-row"{% endif %}>{% if entry.kind == 'paired' %}<div class="field-pair">{% for part in entry.fields %}{{ field(part) }}{% endfor %}</div>{% elif entry.kind == 'field' %}{{ field(entry.field) }}{% else %}{{ rich(entry.segments) }}{% endif %}</li>{% endfor %}</ul>
 {%- endmacro %}
-{% macro card(item) -%}
+{% macro measure_box(name) -%}
+{% if measurement %}<span id="{{ name }}-start" class="measure-point measure-start" aria-hidden="true"></span><span id="{{ name }}-end" class="measure-point measure-end" aria-hidden="true"></span>{% endif %}
+{%- endmacro %}
+{% macro card(item,name) -%}
 {% set section = item.section %}
 <section class="card {{ section.tone }}{% if item.flight %} flight-card{% endif %}">
+{{ measure_box(name) }}
 <h2><span class="badge" aria-hidden="true">{{ icons[item.icon]|safe }}</span>{{ section.title }}</h2>
 {% if item.flight %}
 {% set flight = item.flight %}
@@ -135,23 +141,29 @@ strong.emphasis-restriction {color:#a52f32}
 </section>
 {%- endmacro %}
 {% for item in pages %}
+{% set prefix='dt-p' ~ loop.index %}
 <article class="sheet{% if loop.index > 1 %} continuation{% endif %}" data-plan-page="{{ loop.index }}">
+{{ measure_box(prefix ~ '-sheet') }}
 <header class="hero">
-<div class="photo-frame{% if photographic_hero %} photograph{% endif %}">{% if hero %}<img class="scene" src="{{ hero }}" alt="">{% endif %}</div>
+{{ measure_box(prefix ~ '-hero') }}
+<div class="photo-frame{% if photographic_hero %} photograph{% endif %}">{{ measure_box(prefix ~ '-photo') }}{% if hero %}<img class="scene" src="{{ hero }}" alt="">{% endif %}</div>
+<svg class="brand-plate" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="0,0 100,0 80,100 0,100" fill="#fcfaf6"/></svg>
 <img class="brand" src="{{ wordmark }}" alt="Diff Travel">
 <div class="promise">Viaje tranquilo, <strong>Nós cuidamos de Você!</strong></div>
 <img class="mascot" src="{{ mascot }}" alt="DifBot">
 <svg class="wave" viewBox="0 0 1000 80" preserveAspectRatio="none" aria-hidden="true"><path d="M0 5 C370 90 640 -35 1000 36 L1000 80 L0 80Z" fill="#b94f18"/><path d="M0 16 C370 96 640 -23 1000 47 L1000 80 L0 80Z" fill="#073b55"/><path d="M0 37 C370 112 640 -3 1000 65 L1000 80 L0 80Z" fill="#fcfaf6"/></svg>
 </header>
-<div class="heading"><p class="eyebrow">{{ item.page.eyebrow }}</p><h1>{{ item.page.title }}</h1>{% if item.page.introduction %}<p class="intro">{{ rich(item.introduction) }}</p>{% endif %}</div>
+<div class="heading">{{ measure_box(prefix ~ '-heading') }}<p class="eyebrow">{{ item.page.eyebrow }}</p><h1>{{ item.page.title }}</h1>{% if item.page.introduction %}<p class="intro">{{ rich(item.introduction) }}</p>{% endif %}</div>
 <main class="content">
+{{ measure_box(prefix ~ '-content') }}
 <div class="top-grid{% if not item.page.code_id %} no-code{% elif item.wide_code %} wide-code{% endif %}">
-<div class="summary{% if item.paired %} paired{% endif %}">{% for entry in item.cards[:2] %}{{ card(entry) }}{% endfor %}</div>
-{% if item.page.code_id %}<aside class="qr-card"><div class="qr-kicker">Código original</div><div class="code-box" data-code-id="{{ item.page.code_id }}"></div><p class="code-label">{{ item.code_label }}</p></aside>{% endif %}
+<div class="summary-column"><div class="summary{% if item.paired %} paired{% endif %}">{% for entry in item.cards[:2] %}{{ card(entry,prefix ~ '-card-' ~ loop.index) }}{% endfor %}</div></div>
+{% if item.page.code_id %}<div class="qr-column"><aside class="qr-card">{{ measure_box(prefix ~ '-qr') }}<div class="qr-kicker">Código original</div><div class="code-box" data-code-id="{{ item.page.code_id }}">{{ measure_box(prefix ~ '-code') }}</div><p class="code-label">{{ item.code_label }}</p></aside></div>{% endif %}
 </div>
-{% for entry in item.cards[2:] %}<div class="wide">{{ card(entry) }}</div>{% endfor %}
+{% for entry in item.cards[2:] %}<div class="wide">{{ card(entry,prefix ~ '-card-' ~ (loop.index+2)) }}</div>{% endfor %}
 </main>
 <footer class="footer{% if complete and loop.last %} final{% endif %}">
+{{ measure_box(prefix ~ '-footer') }}
 {% if complete and loop.last %}<div class="closing"><p>Este documento foi gerado pela <strong>Diff Travel</strong> a partir do documento original do fornecedor.</p>{% if original_download %}<div><a class="original-download" href="{{ original_download.url }}">Baixar PDF original</a>{% if original_download.expires_label %}<span class="download-expiry">Link disponível até {{ original_download.expires_label }}</span>{% endif %}</div>{% endif %}</div>{% endif %}
 <div class="footer-line"{% if not (complete and loop.last) %} style="width:100%"{% endif %}><span>Viaje tranquilo, Nós cuidamos de Você!{% if photo_credit %}<a class="photo-credit" href="{{ photo_source }}">{{ photo_credit }}</a>{% endif %}</span><span class="pagination">{{ '%02d'|format(loop.index) }} / {{ '%02d'|format(total_pages) }}</span></div></footer>
 </article>

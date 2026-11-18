@@ -254,7 +254,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @api.get('/healthz')
     def health():
         return {'status': 'ok', 'version': '2.0.0', 'render_mode':settings.render_mode,
-                'pipeline_version':settings.pipeline_version}
+                'pipeline_version':settings.pipeline_version,'html_engine':settings.html_engine}
 
     @api.get('/readyz')
     def ready():

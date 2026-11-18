@@ -69,26 +69,41 @@ def split_page(original):
     return first,second
 
 
-def paginate_in_browser(browser_page,plan,render_markup,measure,max_pages):
-    result=coalesce_cards(plan)
-    for _ in range(max_pages*10):
-        if len(result.pages)>max_pages:
-            raise AIError('HTML_OUTPUT_PAGE_LIMIT','O documento requer mais páginas do que o limite configurado.')
-        markup=render_markup(result)
+def _browser_measure(browser_page,render_markup,measure):
+    def measured(plan):
+        markup=render_markup(plan)
         browser_page.set_content(markup,wait_until='load')
         browser_page.evaluate('() => document.fonts.ready')
         if not browser_page.evaluate('() => [...document.images].every(i => i.complete && i.naturalWidth > 0)'):
             raise AIError('HTML_ASSET_LOAD','Uma imagem do template não foi carregada.')
-        layout=browser_page.evaluate(measure)
+        return browser_page.evaluate(measure),markup
+    return measured
+
+
+def paginate_in_browser(browser_page,plan,render_markup,measure,max_pages):
+    return paginate_measured(plan,_browser_measure(browser_page,render_markup,measure),max_pages)
+
+
+def paginate_measured(plan,measure_plan,max_pages):
+    """Use actual engine geometry; never guess a character limit or trim data."""
+    result=coalesce_cards(plan)
+    for _ in range(max_pages*10):
+        if len(result.pages)>max_pages:
+            raise AIError('HTML_OUTPUT_PAGE_LIMIT','O documento requer mais páginas do que o limite configurado.')
+        layout,markup=measure_plan(result)
         failure=next((i for i,x in enumerate(layout) if not x['passed']),None)
         if failure is None:
-            return compact_in_browser(browser_page,result,render_markup,measure)
+            return compact_measured(result,measure_plan)
         first,second=split_page(result.pages[failure])
         result.pages[failure:failure+1]=[first,second]
     raise AIError('HTML_PAGINATION_LIMIT','A paginação não convergiu dentro do limite seguro.')
 
 
 def compact_in_browser(browser_page,plan,render_markup,measure):
+    return compact_measured(plan,_browser_measure(browser_page,render_markup,measure))
+
+
+def compact_measured(plan,measure_plan):
     """Fill spare room with the next complete card, retaining source order.
 
     Optional, bounded layout optimization. Independent code pages stay atomic.
@@ -111,15 +126,10 @@ def compact_in_browser(browser_page,plan,render_markup,measure):
             index+=1; continue
         if not second.sections: candidate.pages.pop(index+1)
         attempts+=1
-        browser_page.set_content(render_markup(candidate),wait_until='load')
-        browser_page.evaluate('() => document.fonts.ready')
-        layout=browser_page.evaluate(measure)
+        layout,_=measure_plan(candidate)
         if all(item['passed'] for item in layout): result=candidate
         else: index+=1
-    markup=render_markup(result)
-    browser_page.set_content(markup,wait_until='load')
-    browser_page.evaluate('() => document.fonts.ready')
-    layout=browser_page.evaluate(measure)
+    layout,markup=measure_plan(result)
     if not all(item['passed'] for item in layout):
         raise AIError('HTML_LAYOUT_OVERFLOW','A conferência final da distribuição dos cards falhou.')
     return result,layout,markup

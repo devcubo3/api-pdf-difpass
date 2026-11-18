@@ -240,6 +240,7 @@ def process_claim(settings: Settings, row: dict) -> None:
                     issues.append({'code':'AI_IMAGE_TEXT_MISMATCH', 'blocking':True,
                         'message':'A leitura da imagem não confirmou todo o texto planejado. Não aprovar.'})
             else:
+                checks['html_engine']=rendered['html_engine']
                 checks['template_text']=rendered['template_text_checks']
                 checks['template_layout']=rendered['template_layout_checks']
                 checks['template_version']=rendered['template_version']

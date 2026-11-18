@@ -27,6 +27,7 @@ class Settings:
     legacy_pdf_hosts_json: str = field(default='{}', repr=False)
     require_legacy_pdf_url: bool = False
     html_browser_channel: str | None = None
+    html_engine: str = 'chromium'
     public_base_url: str | None = None
     original_link_ttl_days: int = 365
     media_mode: str = 'brand'
@@ -92,6 +93,8 @@ class Settings:
             raise ValueError('PDF_LEGACY_PDF_HOSTS must map tenant IDs to exact HTTPS hostnames') from None
         if self.html_browser_channel not in {None, 'chrome', 'msedge'}:
             raise ValueError('Unsupported HTML browser channel')
+        if self.html_engine not in {'chromium', 'weasyprint'}:
+            raise ValueError('PDF_HTML_ENGINE must be chromium or weasyprint')
         if not 1 <= self.ai_max_pages <= 40 or not 30 <= self.ai_request_timeout_seconds <= 300:
             raise ValueError('Invalid AI page/timeout limit')
         if not 0.05 <= self.ai_document_budget_usd <= self.ai_daily_budget_usd <= 1000:
@@ -149,6 +152,7 @@ class Settings:
             legacy_pdf_hosts_json=os.getenv('PDF_LEGACY_PDF_HOSTS') or '{}',
             require_legacy_pdf_url=os.getenv('PDF_REQUIRE_LEGACY_PDF_URL','false').lower()=='true',
             html_browser_channel=os.getenv('PDF_HTML_BROWSER_CHANNEL') or None,
+            html_engine=os.getenv('PDF_HTML_ENGINE', 'chromium'),
             public_base_url=os.getenv('PDF_PUBLIC_BASE_URL') or None,
             original_link_ttl_days=int(os.getenv('PDF_ORIGINAL_LINK_TTL_DAYS','365')),
             media_mode=os.getenv('PDF_MEDIA_MODE','brand'),

@@ -27,7 +27,9 @@ class SharedRuntime:
     def docker(self, *args, check=True):
         return subprocess.run(['docker', *args], check=check, capture_output=True, text=True)
 
-    def start(self, enabled=True, persistent=True, custom_seccomp=True):
+    def start(self, enabled=True, persistent=True, custom_seccomp=None):
+        if custom_seccomp is None:
+            custom_seccomp=self.env.get('PDF_HTML_ENGINE','chromium')=='chromium'
         values = {key: value for key, value in self.env.items()
                   if key.startswith(('PDF_', 'OPENAI_', 'DATABASE_URL', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'))}
         values.update({'PORT': '8000', 'PDF_PREMIUM_ENABLED': str(enabled).lower(),
@@ -158,7 +160,7 @@ def verify_fallbacks(image, env, output, port):
             runtime.close()
     # Reproduce the hosting-style default seccomp policy. No provider call or
     # customer document is involved; the legacy endpoint must remain available.
-    runtime = SharedRuntime(image, env, output, port)
+    runtime = SharedRuntime(image, {**env,'PDF_HTML_ENGINE':'chromium'}, output, port)
     try:
         runtime.start(custom_seccomp=False)
         base = f'http://127.0.0.1:{port}'

@@ -103,3 +103,30 @@ jobs:
           path: |
             premium/var/test-results/canonical-http-*/report.json
             premium/var/test-results/canonical-http-*/*.log
+
+  portable-renderer:
+    runs-on: ubuntu-22.04
+    env:
+      PDF_TEST_HTML_ENGINE: weasyprint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-por tesseract-ocr-eng libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+      - run: python -m pip install -r premium/requirements-dev.txt
+      - name: Verify portable layout, pagination, original codes and download link
+        run: python -m pytest tests/test_html_template.py tests/test_canonical.py tests/test_weasy_engine.py tests/test_shared_service.py -q --junitxml=var/test-results/portable.xml
+        working-directory: premium
+      - run: docker build -f premium/Dockerfile.shared -t difftravel-portable:ci .
+      - name: Exercise both APIs with default Docker seccomp and no elevated capabilities
+        run: python scripts/smoke_canonical_http.py --shared-image difftravel-portable:ci --html-engine weasyprint
+        working-directory: premium
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: portable-renderer-test-report
+          path: |
+            premium/var/test-results/portable.xml
+            premium/var/test-results/canonical-http-*/report.json
+            premium/var/test-results/canonical-http-*/*.log

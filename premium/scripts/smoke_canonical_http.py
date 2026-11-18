@@ -29,6 +29,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir',type=Path)
     parser.add_argument('--shared-image', help='Exercise both APIs and the worker in this Docker image')
+    parser.add_argument('--html-engine',choices=['chromium','weasyprint'],default='chromium')
     parser.add_argument('--browser-channel',choices=['chrome','msedge','chromium'],
                         default='chrome' if os.name=='nt' else 'chromium')
     args=parser.parse_args()
@@ -98,7 +99,7 @@ def main():
         'HTTP_PROXY':'','HTTPS_PROXY':'','ALL_PROXY':'','NO_PROXY':'127.0.0.1,localhost',
         'PDF_API_TOKENS':json.dumps({token:{'tenant_id':'synthetic','subject':'smoke','roles':['upload','read','review']}}),
         'PDF_DATA_DIR':str(output/'runtime'),'DATABASE_URL':'sqlite:///'+(output/'runtime/state.db').as_posix(),
-        'PDF_RENDER_MODE':'html_template','PDF_PIPELINE_VERSION':'canonical_v1','PDF_HTML_BROWSER_CHANNEL':
+        'PDF_RENDER_MODE':'html_template','PDF_HTML_ENGINE':args.html_engine,'PDF_PIPELINE_VERSION':'canonical_v1','PDF_HTML_BROWSER_CHANNEL':
             '' if args.browser_channel=='chromium' else args.browser_channel,
         'PDF_PUBLIC_BASE_URL':base,'PDF_MEDIA_MODE':'brand','PDF_WORKER_TIMEOUT_SECONDS':'600',
         'PDF_AI_DOCUMENT_BUDGET_USD':'0.20','PDF_AI_DAILY_BUDGET_USD':'0.20'})
@@ -138,6 +139,7 @@ def main():
                 if time.monotonic()>deadline: raise RuntimeError('Synthetic worker timeout; no retry')
                 time.sleep(.2)
             assert review['checks'].get('validations_passed'),[x['code'] for x in review['issues']]
+            assert review['checks']['html_engine']==args.html_engine
             assert review['data']['document_type']=='car_rental'
             artifact=client.get(route+'/review/pdf'); assert artifact.status_code==200
             assert hashlib.sha256(artifact.content).hexdigest()==review['artifact_sha256']

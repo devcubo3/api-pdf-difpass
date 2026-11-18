@@ -24,7 +24,7 @@ from .typography import emphasis_segments,bullet_view
 from .hotel_preservation import preserve_hotel_data
 from .media_context import primary_place
 
-TEMPLATE_VERSION = 'difftravel-html-v12-uniform-diagonal-header'
+TEMPLATE_VERSION = 'difftravel-html-v13-portable-vector-header'
 TEMPLATE_DIR = Path(__file__).parent / 'html_templates'
 ICONS = {
     'neutral':'<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>',
@@ -61,7 +61,7 @@ def data_uri(path: Path, mime: str) -> str:
     return f'data:{mime};base64,' + base64.b64encode(path.read_bytes()).decode('ascii')
 
 
-def build_html(plan, codes, data, brand_dir: Path, scope='full',media_asset=None,flight_fields=None,original_download=None) -> str:
+def build_html(plan, codes, data, brand_dir: Path, scope='full',media_asset=None,flight_fields=None,original_download=None, *, measurement=False) -> str:
     code_map = {c['id']: c for c in codes}
     selected = plan.pages[:1] if scope == 'preview' else plan.pages
     pages = []
@@ -101,8 +101,13 @@ def build_html(plan, codes, data, brand_dir: Path, scope='full',media_asset=None
         hero=data_uri(path,'image/jpeg')
     environment = Environment(loader=FileSystemLoader(TEMPLATE_DIR),
         autoescape=select_autoescape(['html']), undefined=StrictUndefined)
+    icons={name:svg.replace('<svg ', '<svg fill="none" stroke="'+(
+        '#16734a' if name=='included' else '#a3442c' if name=='attention' else '#073b55')+
+        '" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ')
+        for name,svg in ICONS.items()}
     return environment.get_template('premium.html').render(title=plan.title, pages=pages,
-        total_pages=len(plan.pages), icons=ICONS, hero=hero, photographic_hero=bool(media_asset),
+        total_pages=len(plan.pages), icons=icons, hero=hero, photographic_hero=bool(media_asset),
+        measurement=measurement,
         complete=scope=='full',original_download=original_download,
         photo_credit=((('Imagem de apoio: ' if (media_asset.get('authority')=='destination_stock'
                         or (primary_place(data) or {}).get('kind')=='destination') else 'Foto: ')
@@ -229,53 +234,63 @@ def render_html_document(settings, plan, coverage, extracted, output_dir, planne
     output_dir.mkdir(parents=True,exist_ok=True)
     markup=build_html(plan,extracted['codes'],extracted['data'],settings.brand_dir,scope,media_asset,flight_fields,original_download)
     (output_dir/'document.html').write_text(markup,encoding='utf-8')
-    try:
-        with sync_playwright() as playwright:
-            browser_env={key:os.environ[key] for key in ('PATH','SystemRoot','WINDIR','TEMP','TMP',
-                'HOME','USERPROFILE','LOCALAPPDATA','LANG','LC_ALL','DISPLAY','XDG_RUNTIME_DIR',
-                'FONTCONFIG_PATH','PLAYWRIGHT_BROWSERS_PATH') if key in os.environ}
-            browser=playwright.chromium.launch(headless=True,channel=settings.html_browser_channel,
-                                               chromium_sandbox=True,env=browser_env)
-            try:
-                context=browser.new_context(java_script_enabled=False,service_workers='block')
-                context.route('**/*',lambda route:route.abort())
-                page=context.new_page()
-                page.set_default_timeout(30000)
-                page.emulate_media(media='print')
-                if canonical:
-                    from .pagination import paginate_in_browser
-                    # Measure the complete document even for preview so continuation
-                    # later reuses the same content and deterministic pagination.
-                    plan,layout,markup=paginate_in_browser(page,plan,
-                        lambda p:build_html(p,extracted['codes'],extracted['data'],settings.brand_dir,
-                            'full',media_asset,flight_fields,original_download),MEASURE_LAYOUT,settings.max_output_pages)
-                    (output_dir/'document.html').write_text(markup,encoding='utf-8')
-                    if scope=='preview':
-                        page.set_content(build_html(plan,extracted['codes'],extracted['data'],settings.brand_dir,
-                            scope,media_asset,flight_fields,None),wait_until='load')
+    if settings.html_engine=='weasyprint':
+        from .weasy_rendering import render_document
+        plan,layout,markup,raw=render_document(settings,plan,
+            lambda candidate,selected_scope:build_html(candidate,extracted['codes'],extracted['data'],
+                settings.brand_dir,selected_scope,media_asset,flight_fields,
+                original_download if selected_scope=='full' else None,measurement=True),
+            canonical=canonical,scope=scope,photographic=bool(media_asset),
+            photo_visible=bool(media_asset or extracted['data'].get('hero_asset')))
+        (output_dir/'document.html').write_text(markup,encoding='utf-8')
+    else:
+        try:
+            with sync_playwright() as playwright:
+                browser_env={key:os.environ[key] for key in ('PATH','SystemRoot','WINDIR','TEMP','TMP',
+                    'HOME','USERPROFILE','LOCALAPPDATA','LANG','LC_ALL','DISPLAY','XDG_RUNTIME_DIR',
+                    'FONTCONFIG_PATH','PLAYWRIGHT_BROWSERS_PATH') if key in os.environ}
+                browser=playwright.chromium.launch(headless=True,channel=settings.html_browser_channel,
+                                                   chromium_sandbox=True,env=browser_env)
+                try:
+                    context=browser.new_context(java_script_enabled=False,service_workers='block')
+                    context.route('**/*',lambda route:route.abort())
+                    page=context.new_page()
+                    page.set_default_timeout(30000)
+                    page.emulate_media(media='print')
+                    if canonical:
+                        from .pagination import paginate_in_browser
+                        # Measure the complete document even for preview so continuation
+                        # later reuses the same content and deterministic pagination.
+                        plan,layout,markup=paginate_in_browser(page,plan,
+                            lambda p:build_html(p,extracted['codes'],extracted['data'],settings.brand_dir,
+                                'full',media_asset,flight_fields,original_download),MEASURE_LAYOUT,settings.max_output_pages)
+                        (output_dir/'document.html').write_text(markup,encoding='utf-8')
+                        if scope=='preview':
+                            page.set_content(build_html(plan,extracted['codes'],extracted['data'],settings.brand_dir,
+                                scope,media_asset,flight_fields,None),wait_until='load')
+                            page.evaluate('() => document.fonts.ready')
+                            layout=page.evaluate(MEASURE_LAYOUT)
+                    else:
+                        page.set_content(markup,wait_until='load')
                         page.evaluate('() => document.fonts.ready')
+                        loaded=page.evaluate('() => [...document.images].every(i => i.complete && i.naturalWidth > 0)')
+                        if not loaded:
+                            raise AIError('HTML_ASSET_LOAD','Uma imagem do template não foi carregada.')
                         layout=page.evaluate(MEASURE_LAYOUT)
-                else:
-                    page.set_content(markup,wait_until='load')
-                    page.evaluate('() => document.fonts.ready')
-                    loaded=page.evaluate('() => [...document.images].every(i => i.complete && i.naturalWidth > 0)')
-                    if not loaded:
-                        raise AIError('HTML_ASSET_LOAD','Uma imagem do template não foi carregada.')
-                    layout=page.evaluate(MEASURE_LAYOUT)
-                    for item in layout:
-                        if not item['passed']:
-                            page.locator('.sheet').nth(item['page']-1).evaluate("el => el.classList.add('compact')")
-                    layout=page.evaluate(MEASURE_LAYOUT)
-                    if not all(item['passed'] for item in layout):
-                        raise AIError('HTML_LAYOUT_OVERFLOW','O conteúdo excede a área legível do template. Revisar a distribuição das páginas.')
-                if not all(item['header']['passed'] and item['header']==layout[0]['header'] for item in layout):
-                    raise AIError('HTML_HEADER_LAYOUT', 'A geometria do cabeçalho não é uniforme.')
-                raw=page.pdf(format='A4',print_background=True,prefer_css_page_size=True,
-                             display_header_footer=False)
-            finally:
-                browser.close()
-    except BrowserError:
-        raise AIError('HTML_BROWSER_UNAVAILABLE','Não foi possível renderizar o template. Verifique a instalação do Chromium no worker.') from None
+                        for item in layout:
+                            if not item['passed']:
+                                page.locator('.sheet').nth(item['page']-1).evaluate("el => el.classList.add('compact')")
+                        layout=page.evaluate(MEASURE_LAYOUT)
+                        if not all(item['passed'] for item in layout):
+                            raise AIError('HTML_LAYOUT_OVERFLOW','O conteúdo excede a área legível do template. Revisar a distribuição das páginas.')
+                    if not all(item['header']['passed'] and item['header']==layout[0]['header'] for item in layout):
+                        raise AIError('HTML_HEADER_LAYOUT', 'A geometria do cabeçalho não é uniforme.')
+                    raw=page.pdf(format='A4',print_background=True,prefer_css_page_size=True,
+                                 display_header_footer=False)
+                finally:
+                    browser.close()
+        except BrowserError:
+            raise AIError('HTML_BROWSER_UNAVAILABLE','Não foi possível renderizar o template. Verifique a instalação do Chromium no worker.') from None
     selected=plan.pages[:1] if scope=='preview' else plan.pages
     (output_dir/'browser.pdf').write_bytes(raw)
     code_map={c['id']:c for c in extracted['codes']}
@@ -316,7 +331,7 @@ def render_html_document(settings, plan, coverage, extracted, output_dir, planne
             pdf_page.get_pixmap(dpi=settings.render_dpi,alpha=False).save(path)
             paths.append(str(path.resolve()))
     return {'pdf_path':str(pdf_path.resolve()),'page_paths':paths,'page_count':len(paths),
-        'code_placements':placements,'render_mode':'html_template','content_plan':plan.model_dump(),
+        'code_placements':placements,'render_mode':'html_template','html_engine':settings.html_engine,'content_plan':plan.model_dump(),
         'generation_scope':scope,'planned_page_count':len(plan.pages),'content_plan_checks':coverage,
         'template_version':TEMPLATE_VERSION,'template_sha256':hashlib.sha256(
             (TEMPLATE_DIR/'premium.html').read_bytes()).hexdigest(),

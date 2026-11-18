@@ -43,7 +43,7 @@ def synthetic_plan(extracted):
 @pytest.fixture
 def case(tmp_path):
     settings=Settings(data_dir=tmp_path/'data',database_url=f'sqlite:///{tmp_path.as_posix()}/state.db',
-        render_mode='html_template',public_base_url='https://premium.example.test',html_browser_channel=os.getenv('PDF_TEST_HTML_BROWSER_CHANNEL') or (
+        render_mode='html_template',html_engine=os.getenv('PDF_TEST_HTML_ENGINE','chromium'),public_base_url='https://premium.example.test',html_browser_channel=os.getenv('PDF_TEST_HTML_BROWSER_CHANNEL') or (
             'chrome' if os.name=='nt' else None),worker_timeout_seconds=7200,
         openai_api_key='fake-no-provider-access',tokens_json=json.dumps({
             'reviewer':{'tenant_id':'a','subject':'synthetic','roles':['upload','read','review']},
@@ -158,8 +158,11 @@ def test_diagonal_photo_has_same_full_bleed_header_on_every_page(case, tmp_path,
             for page in pdf:
                 # Chromium may crop the embedded JPEG before writing the PDF.
                 entry=next(im for im in page.get_image_info()
-                           if abs(im['bbox'][0]-page.rect.width*.36)<1
-                           and abs(im['bbox'][2]-page.rect.x1)<1)
+                           if (abs(im['bbox'][0]-page.rect.width*.36)<1
+                               and abs(im['bbox'][2]-page.rect.x1)<1)
+                           or (settings.html_engine=='weasyprint'
+                               and fitz.Rect(im['bbox']).width>=page.rect.width*.63
+                               and fitz.Rect(im['bbox']).height>=62*72/25.4-1))
                 box=fitz.Rect(entry['bbox'])
                 bboxes.append(box)
                 assert box.width/box.height==pytest.approx(entry['width']/entry['height'],abs=.01)

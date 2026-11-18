@@ -41,6 +41,7 @@ if args.shared_service:
         'PDF_PREMIUM_ENABLED':'true', 'PORT':'8000', 'PDF_DATA_DIR':'/app/var',
         'DATABASE_URL':'sqlite:////app/var/state.sqlite3',
         'PDF_RENDER_MODE':'html_template', 'PDF_PIPELINE_VERSION':'canonical_v1',
+        'PDF_HTML_ENGINE':'weasyprint',
         'PDF_WORKER_TIMEOUT_SECONDS':'600', 'PDF_AI_DOCUMENT_BUDGET_USD':'0.15',
         'PDF_AI_DAILY_BUDGET_USD':'0.30', 'PDF_MEDIA_MODE':'search',
         'PDF_MEDIA_OPENAI_SEARCH_ENABLED':'true', 'PDF_MEDIA_SEARCH_RESERVE_USD':'0.05',
