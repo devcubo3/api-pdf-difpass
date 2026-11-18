@@ -1,5 +1,12 @@
 # Diff Travel Premium PDF API
 
+HTML composition supports explicit `PDF_HTML_ENGINE=chromium` or
+`PDF_HTML_ENGINE=weasyprint`. WeasyPrint 70.0 renders the same branded template
+without a browser or custom container sandbox profile. Chromium retains its
+sandbox. There is no automatic fallback. Both paths preserve measured pagination,
+native text, original codes and the original-download link, and expose the
+selected engine in health/review metadata. See [renderer details](docs/HTML_ENGINE.md).
+
 Premium code lives in `premium/` on this repository's `main` branch.
 The selected deployment runs both APIs and the premium worker inside the **same
 existing Dokploy service**, sharing its public hostname and port.
