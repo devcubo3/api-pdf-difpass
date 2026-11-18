@@ -4,6 +4,7 @@ x-app: &app
   image: ${PDF_IMAGE_REF:-difftravel-pdf-premium:local}
   build: .
   user: '10001:10001'
+  init: true
   environment: &app-env
     DATABASE_URL: ${DATABASE_URL:?Configure DATABASE_URL no .env}
     PDF_API_TOKENS: ${PDF_API_TOKENS:?Configure PDF_API_TOKENS no .env}

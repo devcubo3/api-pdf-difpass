@@ -13,7 +13,9 @@ permissions:
   contents: read
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04 restricts unprivileged user namespaces for downloaded browsers.
+    # Use a compatible runner while keeping Chromium's sandbox enabled.
+    runs-on: ubuntu-22.04
     services:
       postgres:
         image: postgres:16
@@ -49,7 +51,13 @@ jobs:
       - run: docker build -t difftravel-premium:ci premium
       - name: Exercise sandboxed Chromium inside deployment image
         run: |
-          docker run --rm --init --network none --cap-drop ALL --read-only --tmpfs /tmp:size=512m,mode=1777 --shm-size=256m --security-opt no-new-privileges:true --security-opt seccomp=premium/seccomp-chromium.json difftravel-premium:ci python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(chromium_sandbox=True); page=b.new_page(); page.set_content('<p>SYNTHETIC CONTAINER TEST</p>'); assert page.pdf().startswith(b'%PDF-'); b.close(); p.stop(); print('Sandboxed PDF renderer passed')"
+          docker compose -f premium/docker-compose.yml run --rm --no-deps --entrypoint python worker -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(chromium_sandbox=True); page=b.new_page(); page.set_content('<p>SYNTHETIC CONTAINER TEST</p>'); assert page.pdf().startswith(b'%PDF-'); b.close(); p.stop(); print('Sandboxed PDF renderer passed')"
+        env:
+          PDF_IMAGE_REF: difftravel-premium:ci
+          DATABASE_URL: postgresql+psycopg://difftravel_premium:ci-only@db:5432/difftravel_premium
+          POSTGRES_PASSWORD: ci-only
+          PDF_API_TOKENS: '{}'
+          OPENAI_API_KEY: synthetic-no-provider-access
       - name: Verify legacy dependencies and HTTP contract
         # The legacy service retains its Python 3.11 runtime.
         uses: actions/setup-python@v5

@@ -7,6 +7,9 @@ It serves `POST /v2/documents` and the document review/download routes below `/v
 
 ## Dokploy deployment
 
+The Portuguese [deployment runbook](DEPLOYMENT.md) covers setup, verification,
+Bubble handoff, backups and rollback.
+
 Create a Compose service for premium in the same server/project as the legacy application.
 Use this repository and branch `main`. The compose files are
 `premium/docker-compose.yml` and `premium/docker-compose.dokploy.yml`.
