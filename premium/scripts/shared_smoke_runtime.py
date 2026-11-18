@@ -27,7 +27,7 @@ class SharedRuntime:
     def docker(self, *args, check=True):
         return subprocess.run(['docker', *args], check=check, capture_output=True, text=True)
 
-    def start(self, enabled=True, persistent=True):
+    def start(self, enabled=True, persistent=True, custom_seccomp=True):
         values = {key: value for key, value in self.env.items()
                   if key.startswith(('PDF_', 'OPENAI_', 'DATABASE_URL', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'))}
         values.update({'PORT': '8000', 'PDF_PREMIUM_ENABLED': str(enabled).lower(),
@@ -41,8 +41,9 @@ class SharedRuntime:
         command = ['docker', 'run', '--name', self.name, '--env-file', str(env_file),
             '--publish', f'127.0.0.1:{self.port}:8000', '--add-host', 'host.docker.internal:host-gateway',
             '--cap-drop', 'ALL', '--read-only', '--tmpfs', '/tmp:size=256m,mode=1777',
-            '--memory', '2g', '--pids-limit', '256', '--security-opt', 'no-new-privileges:true',
-            '--security-opt', 'seccomp=' + str(Path(__file__).resolve().parents[1]/'seccomp-chromium.json')]
+            '--memory', '2g', '--pids-limit', '256', '--security-opt', 'no-new-privileges:true']
+        if custom_seccomp:
+            command.extend(['--security-opt', 'seccomp=' + str(Path(__file__).resolve().parents[1]/'seccomp-chromium.json')])
         if persistent:
             self.docker('volume', 'create', self.volume)
             command.extend(['--volume', self.volume + ':/app/var'])
@@ -155,3 +156,19 @@ def verify_fallbacks(image, env, output, port):
                     assert client.get(base+'/v2/documents/nonexistent').status_code == 503
         finally:
             runtime.close()
+    # Reproduce the hosting-style default seccomp policy. No provider call or
+    # customer document is involved; the legacy endpoint must remain available.
+    runtime = SharedRuntime(image, env, output, port)
+    try:
+        runtime.start(custom_seccomp=False)
+        base = f'http://127.0.0.1:{port}'
+        runtime.legacy_check(base)
+        with httpx.Client(trust_env=False) as client:
+            assert client.get(base+'/healthz').status_code == 503
+        logs = runtime.docker('logs', runtime.name).stdout
+        assert 'stage=browser' in logs and 'CHROMIUM_SANDBOX_DENIED' in logs
+        assert 'premium_requested=true' in logs
+        for token in json.loads(env['PDF_API_TOKENS']):
+            assert token not in logs
+    finally:
+        runtime.close()

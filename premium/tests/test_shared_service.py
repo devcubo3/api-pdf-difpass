@@ -39,3 +39,30 @@ def test_shared_credentials_are_private_and_select_html_without_postgres(tmp_pat
                             cwd=tmp_path, capture_output=True)
     assert second.returncode != 0
     assert (tmp_path/'.env').read_text(encoding='utf-8') == content
+
+
+@pytest.mark.parametrize('message,expected',[
+    ('No usable sandbox! command --user-data-dir=/private/profile', 'CHROMIUM_SANDBOX_DENIED'),
+    ('Chromium sandboxing failed!', 'CHROMIUM_SANDBOX_DENIED'),
+    ('namespace: Operation not permitted', 'CHROMIUM_SANDBOX_DENIED'),
+    ('pthread_create: Resource temporarily unavailable', 'CHROMIUM_RESOURCES_UNAVAILABLE'),
+    ('Executable does not exist; executable not found', 'CHROMIUM_INSTALLATION_INCOMPLETE'),
+    ('Permission denied while starting process', 'CHROMIUM_EXECUTION_DENIED'),
+    ('Target page, context or browser has been closed', 'CHROMIUM_STARTUP_FAILED'),
+])
+def test_browser_failure_diagnostics_are_specific_without_copying_raw_message(message,expected,capsys):
+    secret = 'SYNTHETIC_SECRET_DO_NOT_LOG'
+    error = RuntimeError(message + ' OPENAI_API_KEY=' + secret)
+    code = shared.browser_failure_code(error)
+    assert code == expected
+    shared.log_startup_failure(shared.StartupFailure('browser', code, 'TargetClosedError'))
+    output = capsys.readouterr().out
+    assert expected in output and 'stage=browser' in output
+    assert secret not in output and '/private/profile' not in output
+
+
+def test_unknown_preflight_failure_does_not_log_connection_credentials(capsys):
+    shared.log_startup_failure(RuntimeError('postgresql://name:SYNTHETIC_PASSWORD@db/database'))
+    output = capsys.readouterr().out
+    assert 'PREMIUM_PREFLIGHT_FAILED' in output
+    assert 'SYNTHETIC_PASSWORD' not in output and 'postgresql://' not in output

@@ -15,6 +15,43 @@ LEGACY_PORT = 18101
 PREMIUM_PORT = 18102
 
 
+class StartupFailure(Exception):
+    """Only fixed diagnostic codes, never an exception/provider message."""
+    def __init__(self, stage, code, cause_type='StartupFailure'):
+        super().__init__(code)
+        self.stage, self.code, self.cause_type = stage, code, cause_type
+
+
+def browser_failure_code(error):
+    # Examine the message in memory; never copy command lines, paths or environment
+    # variables from Playwright exceptions into logs.
+    message = str(error).casefold()
+    if any(marker in message for marker in (
+            'no usable sandbox', 'sandboxing failed', 'failed to move to new namespace',
+            'namespace_sandbox.cc', 'unprivileged user namespaces')):
+        return 'CHROMIUM_SANDBOX_DENIED'
+    if 'operation not permitted' in message and any(word in message for word in ('namespace', 'sandbox')):
+        return 'CHROMIUM_SANDBOX_DENIED'
+    if any(marker in message for marker in (
+            'out of memory', 'cannot allocate memory', 'pthread_create', 'resource temporarily unavailable')):
+        return 'CHROMIUM_RESOURCES_UNAVAILABLE'
+    if any(marker in message for marker in (
+            "executable doesn't exist", 'executable not found', 'error while loading shared libraries',
+            'cannot open shared object file', 'host system is missing dependencies')):
+        return 'CHROMIUM_INSTALLATION_INCOMPLETE'
+    if 'permission denied' in message:
+        return 'CHROMIUM_EXECUTION_DENIED'
+    return 'CHROMIUM_STARTUP_FAILED'
+
+
+def log_startup_failure(error):
+    stage = error.stage if isinstance(error, StartupFailure) else 'preflight'
+    code = error.code if isinstance(error, StartupFailure) else 'PREMIUM_PREFLIGHT_FAILED'
+    kind = error.cause_type if isinstance(error, StartupFailure) else type(error).__name__
+    print(f'Premium startup failed ({kind}); stage={stage}; code={code}; '
+          'legacy remains available. No AI request was made by startup validation.', flush=True)
+
+
 def enabled():
     return os.getenv('PDF_PREMIUM_ENABLED', 'false').lower() == 'true'
 
@@ -39,7 +76,7 @@ def prepare_premium():
         os.environ.setdefault(key, value)
     data = Path(os.environ['PDF_DATA_DIR'])
     if not data.is_absolute() or not data.is_mount():
-        raise ValueError('Mount a persistent volume directly at PDF_DATA_DIR before enabling premium')
+        raise StartupFailure('storage', 'PREMIUM_STORAGE_NOT_MOUNTED')
     os.environ.setdefault('DATABASE_URL', f'sqlite:///{data.as_posix()}/state.sqlite3')
     sys.path.insert(0, str(PREMIUM))
     from app.config import Settings
@@ -47,9 +84,12 @@ def prepare_premium():
     from app.storage import Storage
     settings = Settings.from_env()
     if settings.render_mode != 'html_template' or settings.pipeline_version != 'canonical_v1':
-        raise ValueError('Shared deployment requires html_template and canonical_v1')
-    if not settings.public_base_url or not settings.openai_api_key or not settings.api_tokens:
-        raise ValueError('Configure the public HTTPS origin, OpenAI key and premium API tokens')
+        raise StartupFailure('configuration', 'PREMIUM_MODE_INVALID')
+    for present, code in ((settings.public_base_url, 'PREMIUM_PUBLIC_URL_MISSING'),
+                          (settings.openai_api_key, 'PREMIUM_OPENAI_KEY_MISSING'),
+                          (settings.api_tokens, 'PREMIUM_API_TOKENS_MISSING')):
+        if not present:
+            raise StartupFailure('configuration', code)
     # The parent holds this OS lock across the supervisor's lifetime, preventing
     # overlapping replicas/redeployments from sharing this SQL queue.
     import fcntl
@@ -58,7 +98,7 @@ def prepare_premium():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close()
-        raise ValueError('This volume already has an active shared-service instance') from None
+        raise StartupFailure('storage', 'PREMIUM_INSTANCE_ALREADY_RUNNING') from None
     Storage(data)
     database = Database(settings)
     try:
@@ -66,9 +106,13 @@ def prepare_premium():
     finally:
         database.engine.dispose()
     from playwright.sync_api import sync_playwright
-    with sync_playwright() as p:
-        browser = p.chromium.launch(chromium_sandbox=True)
-        browser.close()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(chromium_sandbox=True)
+            browser.close()
+    except Exception as error:
+        lock.close()
+        raise StartupFailure('browser', browser_failure_code(error), type(error).__name__) from None
     return lock
 
 
@@ -152,6 +196,7 @@ stderr_logfile_maxbytes=0
 
 def main():
     port = public_port()
+    print(f'Shared runtime startup-v2; premium_requested={str(enabled()).lower()}', flush=True)
     if not enabled():
         os.chdir(ROOT)
         os.execv('/opt/legacy/bin/python', ['/opt/legacy/bin/python', '-m', 'uvicorn',
@@ -166,9 +211,7 @@ def main():
         lock = prepare_premium()
         available = True
     except Exception as error:
-        # Never log exception strings: SQL/browser exceptions can contain secrets.
-        print(f'Premium startup failed ({type(error).__name__}); legacy remains available. '
-              'Verify storage, credentials, volume ownership and Chromium sandbox.', flush=True)
+        log_startup_failure(error)
     (RUNTIME / 'state.json').write_text(json.dumps({'premium_available': available}), encoding='utf-8')
     (RUNTIME / 'nginx.conf').write_text(nginx_config(port, available), encoding='utf-8')
     (RUNTIME / 'supervisord.conf').write_text(supervisor_config(available), encoding='utf-8')
