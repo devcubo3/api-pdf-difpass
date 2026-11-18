@@ -55,12 +55,19 @@
       "names": [
         "clone",
         "setns",
-        "unshare"
+        "unshare",
+        "chroot"
       ],
       "action": "SCMP_ACT_ALLOW",
       "args": [],
       "includes": {},
       "excludes": {}
+    },
+    {
+      "comment": "Match Docker's clone3 ENOSYS response so glibc can use clone",
+      "names": ["clone3"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 38
     },
     {
       "names": [

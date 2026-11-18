@@ -33,6 +33,9 @@ every call includes the corresponding standard PDF URL.
 
 The Chromium seccomp profile is copied from Microsoft's Playwright v1.64.1
 `utils/docker/seccomp_profile.json`. Its license accompanies the profile.
+It also allows `chroot` for Chromium's user-namespace sandbox when all container
+capabilities are dropped, and returns ENOSYS for `clone3`, matching Docker's
+compatibility rule so glibc can fall back to `clone`.
 The container runs as UID 10001 with Chromium sandboxing enabled.
 
 ## Validation
