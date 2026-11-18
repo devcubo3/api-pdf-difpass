@@ -41,6 +41,15 @@ jobs:
         working-directory: premium
       - run: python scripts/smoke_canonical_http.py --browser-channel chromium
         working-directory: premium
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: premium-tests
+          path: premium/var/test-results/*.xml
+  deployment-image:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
       - name: Validate premium compose
         run: docker compose -f premium/docker-compose.yml -f premium/docker-compose.dokploy.yml config --quiet
         env:
@@ -58,6 +67,10 @@ jobs:
           POSTGRES_PASSWORD: ci-only
           PDF_API_TOKENS: '{}'
           OPENAI_API_KEY: synthetic-no-provider-access
+  legacy-compatibility:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
       - name: Verify legacy dependencies and HTTP contract
         # The legacy service retains its Python 3.11 runtime.
         uses: actions/setup-python@v5
@@ -71,8 +84,3 @@ jobs:
           legacy_pid=$!
           trap 'kill "$legacy_pid" 2>/dev/null || true' EXIT
           /tmp/difftravel-legacy-ci/bin/python premium/scripts/smoke_legacy_http.py --base-url http://127.0.0.1:8099
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: premium-tests
-          path: premium/var/test-results/*.xml
