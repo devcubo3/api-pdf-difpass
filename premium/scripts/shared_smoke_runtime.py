@@ -1,13 +1,18 @@
 """Docker fixture for the synthetic HTTP smoke; no application imports or keys."""
 import json
+import hashlib
+import io
 import os
 from pathlib import Path
 import subprocess
 import sys
+import socket
 import time
 from uuid import uuid4
 
 import httpx
+from PIL import Image
+from reportlab.pdfgen import canvas
 
 
 class SharedRuntime:
@@ -17,6 +22,7 @@ class SharedRuntime:
         self.volume = self.name + '-data'
         self.log = None
         self.process = None
+        self.owns_volume = True
 
     def docker(self, *args, check=True):
         return subprocess.run(['docker', *args], check=check, capture_output=True, text=True)
@@ -60,8 +66,41 @@ class SharedRuntime:
         subprocess.run([sys.executable, str(Path(__file__).with_name('smoke_legacy_http.py')),
                         '--base-url', base], check=True)
 
+    def check_legacy_filenames(self, base):
+        source = io.BytesIO()
+        document = canvas.Canvas(source)
+        document.drawString(40, 700, 'SYNTHETIC UPLOAD PATH CHECK')
+        document.showPage(); document.save()
+        picture = io.BytesIO()
+        Image.new('RGB', (40, 40), '#073b55').save(picture, format='PNG')
+        with httpx.Client(trust_env=False, timeout=30) as client:
+            result = client.post(base+'/generate-pdf/', files={
+                'icon_image': ('/app/var/untrusted-icon.png', picture.getvalue(), 'image/png'),
+                'dif_image': ('/app/var/untrusted-logo.png', picture.getvalue(), 'image/png'),
+                'input_pdf': ('/app/var/untrusted-source.pdf', source.getvalue(), 'application/pdf')})
+            assert result.status_code == 200 and result.content.startswith(b'%PDF-')
+        self.docker('exec', self.name, '/opt/premium/bin/python', '-c',
+            "from pathlib import Path; assert not any(Path('/app/var').glob('untrusted-*'))")
+
+    def check_single_instance(self):
+        with socket.socket() as port_socket:
+            port_socket.bind(('127.0.0.1', 0))
+            port = port_socket.getsockname()[1]
+        peer = SharedRuntime(self.image, self.env, self.output, port)
+        peer.volume, peer.owns_volume = self.volume, False
+        try:
+            peer.start()
+            base = f'http://127.0.0.1:{port}'
+            peer.legacy_check(base)
+            with httpx.Client(trust_env=False) as client:
+                assert client.get(base+'/healthz').status_code == 503
+        finally:
+            peer.close()
+
     def verify_recovery(self, client, base, route, sha):
         self.legacy_check(base)
+        self.check_legacy_filenames(base)
+        self.check_single_instance()
         assert '/v2/documents' in client.get(base+'/premium/openapi.json').json()['paths']
         assert client.get(base+'/v2/documents/nonexistent').status_code == 404
         with httpx.Client(trust_env=False) as unauthenticated:
@@ -88,6 +127,8 @@ class SharedRuntime:
         self.wait_healthy(client, base)
         saved = client.get(base+route+'/review').json()
         assert saved['artifact_sha256'] == sha and saved['status'] == 'needs_review'
+        artifact = client.get(base+route+'/review/pdf')
+        assert artifact.status_code == 200 and hashlib.sha256(artifact.content).hexdigest() == sha
         self.legacy_check(base)
 
     def close(self):
@@ -97,7 +138,8 @@ class SharedRuntime:
             self.process.wait(timeout=30)
         if self.log:
             self.log.close()
-        self.docker('volume', 'rm', self.volume, check=False)
+        if self.owns_volume:
+            self.docker('volume', 'rm', self.volume, check=False)
 
 
 def verify_fallbacks(image, env, output, port):

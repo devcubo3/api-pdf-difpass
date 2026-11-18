@@ -112,7 +112,8 @@ http {{
 
 
 def supervisor_config(premium_available):
-    programs = [('legacy', '/opt/legacy/bin/python -m uvicorn api_pdf:app '
+    programs = [('legacy', '/opt/legacy/bin/python -m uvicorn legacy_entry:app '
+        '--app-dir /app/premium/shared_service '
         f'--host 127.0.0.1 --port {LEGACY_PORT} --workers 1 --no-access-log', ROOT)]
     if premium_available:
         programs.extend([
@@ -154,7 +155,8 @@ def main():
     if not enabled():
         os.chdir(ROOT)
         os.execv('/opt/legacy/bin/python', ['/opt/legacy/bin/python', '-m', 'uvicorn',
-            'api_pdf:app', '--host', '0.0.0.0', '--port', str(port), '--workers', '1', '--no-access-log'])
+            'legacy_entry:app', '--app-dir', str(PREMIUM/'shared_service'),
+            '--host', '0.0.0.0', '--port', str(port), '--workers', '1', '--no-access-log'])
     RUNTIME.mkdir(mode=0o700, exist_ok=True)
     for name in ('body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'):
         (RUNTIME / name).mkdir(mode=0o700, exist_ok=True)

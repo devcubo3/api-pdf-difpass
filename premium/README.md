@@ -1,53 +1,63 @@
 # Diff Travel Premium PDF API
 
-The premium API lives in `premium/` on this repository's `main` branch.
-The legacy API starts from the repository root and serves `POST /generate-pdf/`.
-Premium has its own ASGI application, dependency set, database, volumes and containers.
-It serves `POST /v2/documents` and the document review/download routes below `/v2`.
+Premium code lives in `premium/` on this repository's `main` branch.
+The selected deployment runs both APIs and the premium worker inside the **same
+existing Dokploy service**, sharing its public hostname and port.
 
-## Dokploy deployment
+| Public route | Application |
+| --- | --- |
+| `POST /generate-pdf/` | Original API, unchanged multipart contract |
+| `/docs`, `/openapi.json` | Original API documentation |
+| `POST /v2/documents` and `/v2/...` | Premium upload, review and download |
+| `/premium/openapi.json` | Premium API schema |
+| `/healthz`, `/readyz` | Premium health and dependency readiness |
 
-The Portuguese [deployment runbook](DEPLOYMENT.md) covers setup, verification,
-Bubble handoff, backups and rollback.
+Select `premium/Dockerfile.shared` with repository-root build context on the
+existing service. The original Dockerfile, Procfile, requirements and application
+source remain available and unchanged. Publishing this source alone does not
+switch the running application's build configuration.
 
-Create a Compose service for premium in the same server/project as the legacy application.
-Use this repository and branch `main`. The compose files are
-`premium/docker-compose.yml` and `premium/docker-compose.dokploy.yml`.
-The second file joins the API service to the existing external `dokploy-network`.
-Build context resolves to `premium/`.
+The shared image has independent virtual environments for the original pinned
+dependencies and the premium dependencies. Nginx routes one public port to the
+two loopback-only ASGI applications. Supervisor runs/restarts these processes and
+the premium worker; Tini reaps subprocesses. All processes run as UID 10001.
+The shared-only legacy entry adapter fixes internal upload filenames before
+delegating to the original handler, protecting premium storage from path traversal
+without changing the original source or HTTP schema.
 
-The stack contains `api`, `worker` and `db`, plus dedicated `documents` and `database`
-named volumes. Route a separate premium HTTPS hostname to service `api`, internal
-port `8000`. The loopback-only host port is configurable with `PDF_HOST_PORT`.
-Check that the chosen host port is available before deployment.
+Premium activation is explicit: `PDF_PREMIUM_ENABLED=true`. With activation off,
+the image serves the legacy API only. If premium startup validation fails, the
+gateway continues to serve the original API and premium routes return HTTP 503.
+Premium health checks remain unhealthy so the deployment cannot be mistaken for
+a successful premium activation.
 
-Generate unique deployment credentials with `python scripts/setup_env.py --docker`
-in a private working copy. Copy the relevant values to Dokploy's Environment editor.
-Apply the settings from `.env.dokploy.example`, including `PDF_RENDER_MODE=html_template`,
-`PDF_PIPELINE_VERSION=canonical_v1` and the actual premium `PDF_PUBLIC_BASE_URL`.
-The OpenAI key belongs in that private environment.
+The first shared deployment uses SQLite WAL and document files on one named,
+persistent volume mounted at `/app/var`. A process-held file lock prevents two
+premium instances from sharing it. Use one replica, node placement matching the
+volume, and stop-first updates/rollbacks. A full service restart affects both APIs.
 
-Before integrating Bubble, configure `PDF_LEGACY_PDF_HOSTS` with the exact allowed
-standard-PDF hostname(s) for the tenant. Set `PDF_REQUIRE_LEGACY_PDF_URL=true` when
-every call includes the corresponding standard PDF URL.
+See the Portuguese [existing-service deployment runbook](DEPLOYMENT.md) for
+environment, storage, sandbox requirements, verification and rollback.
 
-The Chromium seccomp profile is copied from Microsoft's Playwright v1.64.1
-`utils/docker/seccomp_profile.json`. Its license accompanies the profile.
-It also allows `chroot` for Chromium's user-namespace sandbox when all container
-capabilities are dropped, and returns ENOSYS for `clone3`, matching Docker's
-compatibility rule so glibc can fall back to `clone`.
-The container runs as UID 10001 with Chromium sandboxing enabled.
+## Synthetic validation
 
-## Validation
+Install `requirements-dev.txt` from this directory and run `python -m pytest -q`.
+The HTTP smoke uses an explicit synthetic provider, no real keys or customer data:
 
-From `premium/`, install `requirements-dev.txt`, install the Playwright Chromium
-browser and run `python -m pytest -q`.
-`python scripts/smoke_canonical_http.py --browser-channel chromium` exercises real
-HTTP and a separate worker with an explicitly synthetic provider double.
+```bash
+# Standalone API/worker regression, from premium/:
+python scripts/smoke_canonical_http.py --browser-channel chromium
 
-Health endpoints are `/healthz` and `/readyz`. Monitor the worker heartbeat as well.
-For the legacy contract smoke, run `scripts/smoke_legacy_http.py --base-url <legacy-origin>`.
-The smoke uses synthetic input and checks the two-page PDF response.
+# Shared image, build from repository root:
+docker build -f premium/Dockerfile.shared -t difftravel-shared:test .
+# Then, from premium/:
+python scripts/smoke_canonical_http.py --shared-image difftravel-shared:test --browser-channel chromium
+```
 
-The premium source in this release comes from the independent local premium
-project. Deployment contains code, brand assets and synthetic test fixtures.
+The shared smoke verifies the old two-page PDF contract, actual premium PDF
+generation, authentication, worker crash recovery, persisted artifacts after a
+container restart, disabled activation and invalid premium startup configuration.
+The test provider records exactly one synthetic response and zero real AI calls.
+
+The independent premium Dockerfile/Compose files remain available for diagnostics
+and earlier validation; the current hosting procedure uses the shared Dockerfile.

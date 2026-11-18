@@ -48,6 +48,7 @@ if args.shared_service:
     })
     lines.pop('TESSERACT_CMD', None)
     lines.pop('TESSDATA_PREFIX', None)
+    lines['PDF_API_TOKENS'] = lines['PDF_API_TOKENS'].strip("'")
     content = '\n'.join(f'{key}={value}' for key, value in lines.items()) + '\n'
 with target.open('x', encoding='utf-8') as stream:
     stream.write(content)

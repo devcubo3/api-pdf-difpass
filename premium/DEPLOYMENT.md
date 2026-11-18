@@ -1,78 +1,142 @@
-# Publicação da API premium
+# Ativar as duas APIs no serviço existente
 
-O repositório é compartilhado; os processos são independentes.
+Decisão do usuário em 18/11/2026: usar o mesmo serviço do Dokploy, repositório e
+domínio. Este procedimento substitui a orientação anterior de criar outro serviço.
+O código não altera a configuração do servidor nem o Bubble automaticamente.
 
-| Serviço | Diretório de build | Inicialização | Rota de entrada |
-| --- | --- | --- | --- |
-| API existente | raiz | `api_pdf:app`, Python 3.11 | `POST /generate-pdf/` |
-| API premium | `premium/` | `app.main:app`, Python 3.12 | `POST /v2/documents` |
-| Worker premium | `premium/` | `python -m app.worker` | sem porta pública |
+## 1. Registrar a configuração atual
 
-Não trocar o diretório, o comando de início, o domínio, o banco nem os volumes do
-serviço existente. O Bubble continua chamando o endpoint atual até a integração
-premium ser configurada e homologada separadamente.
+Identificar o serviço que atende `/generate-pdf/`, o servidor de execução, o
+diretório/comando de build, a porta pública, domínio e volumes existentes.
+Guardar a configuração e o identificador da imagem atual de forma privada.
+Confirmar memória/disco suficientes para as duas APIs, Chromium e um worker.
 
-## Configuração no Dokploy
+## 2. Conferir suporte do runtime ao sandbox
 
-1. Identificar o serviço existente e o servidor onde ele executa. O endereço do
-   painel pode ser diferente do endereço do servidor de execução. Conferir memória,
-   disco e portas disponíveis antes de criar os novos containers.
-2. Criar um serviço **Docker Compose** premium com este repositório, branch `main`,
-   arquivo `premium/docker-compose.yml`. Aplicar também
-   `premium/docker-compose.dokploy.yml` para conectar somente a API à rede do proxy.
-   Se a interface exigir um comando personalizado, preservar o nome de projeto
-   exclusivo gerado pelo Dokploy e usar os dois arquivos com `-f`.
-3. Gerar credenciais exclusivas em uma pasta privada com
-   `python scripts/setup_env.py --docker`, executado dentro de `premium/`.
-   Configurar os valores no editor Environment do serviço premium, sem colocá-los
-   no repositório ou em logs. Aplicar o perfil de `.env.dokploy.example` sobre os
-   valores gerados. A chave OpenAI é configurada nesse ambiente privado.
-4. Conferir `PDF_RENDER_MODE=html_template`, `PDF_PIPELINE_VERSION=canonical_v1`,
-   revisão obrigatória e limites de gasto. Confirmar uma porta de loopback livre
-   em `PDF_HOST_PORT`. Manter `db` e `worker` sem portas públicas.
-5. Criar um domínio HTTPS próprio apontando para `api`, porta interna `8000`.
-   Usar esse endereço em `PDF_PUBLIC_BASE_URL` antes de emitir links de download.
-6. Fazer o build e subir `api`, `worker` e `db`. Conferir os três serviços e seus
-   healthchecks. Chromium deve executar com sandbox e usuário sem privilégios.
-   Uma falha de sandbox exige verificar o suporte do host, preservando as
-   proteções do container.
+O Chromium deve executar como UID 10001, com sandbox habilitado. O container
+precisa do perfil `premium/seccomp-chromium.json`, sem capabilities adicionais e
+com `no-new-privileges`. Não usar `privileged`, `SYS_ADMIN`, seccomp unconfined ou
+`--no-sandbox` para contornar uma falha.
 
-O arquivo seccomp é lido na criação do container; mantê-lo disponível no checkout
-de deploy. Os dados de documentos e PostgreSQL usam volumes nomeados próprios.
-Configurar backup desses dois volumes com retenção e teste de restauração.
+Em Docker convencional, aplicar `security-opt seccomp=<perfil>` ao container.
+Em serviço Swarm, o Docker Engine possui a configuração
+`TaskTemplate.ContainerSpec.Privileges.Seccomp` (modo `custom`, perfil em base64).
+O helper abaixo somente gera o JSON dessa configuração; não altera o servidor:
 
-Referências oficiais: [Docker Compose no Dokploy](https://docs.dokploy.com/docs/core/docker-compose)
-e [Chromium em containers](https://playwright.dev/docs/docker).
+```bash
+# Dentro de premium/, em cópia privada:
+python3 scripts/shared_swarm_privileges.py --output /CAMINHO-PRIVADO/privileges.json
+```
 
-## Verificação após publicar
+O responsável deve verificar se a versão instalada de Docker/Dokploy consegue
+aplicar e preservar essa configuração por serviço em cada deploy. A interface
+Swarm Settings não deve ser presumida como oferecendo esse campo. Uma alteração
+avulsa que desapareça no próximo deploy não conclui esta etapa. Não mudar o perfil
+global do daemon para resolver isso. Esse suporte no ambiente real ainda exige
+verificação por quem tem acesso; os testes do repositório usam um container Docker
+com o perfil explicitamente aplicado.
 
-- Confirmar HTTP 200 em `/healthz` e `/readyz` do domínio premium, além do heartbeat
-  recente do worker. Verificar que `/openapi.json` contém `/v2/documents`.
-- Repetir `python premium/scripts/smoke_legacy_http.py --base-url <origem-antiga>`
-  em um cliente com as dependências de teste instaladas. Ele envia somente um
-  documento sintético de duas páginas e valida a resposta PDF.
-- Confirmar que a configuração do endpoint antigo no Bubble continua igual.
-- Antes do uso com clientes, homologar upload, processamento, revisão, aprovação,
-  download e botão do PDF padrão da API antiga. Esse ensaio real pode chamar IA;
-  acompanhar o orçamento e o registro de uso antes de repetir qualquer geração.
+Referências: [Playwright Docker](https://playwright.dev/docs/docker),
+[Docker Swarm ContainerSpec](https://github.com/moby/moby/blob/master/api/types/swarm/container.go)
+e [Dokploy Advanced](https://docs.dokploy.com/docs/core/applications/advanced).
 
-O workflow do repositório testa o pipeline com dados sintéticos, PostgreSQL,
-cliente HTTP e worker separado, a imagem Docker e o contrato da API antiga.
-Esses testes não usam chaves reais nem consomem créditos de IA.
+## 3. Ajustar o build do serviço atual
 
-## Integração posterior com o Bubble
+- Repositório: `devcubo3/api-pdf-difpass`; branch `main`.
+- Método de build: Dockerfile.
+- Contexto: raiz do repositório (`.`).
+- Dockerfile: `premium/Dockerfile.shared`.
+- Remover o override do comando antigo apenas nesta configuração do painel,
+  deixando executar o CMD/ENTRYPOINT da nova imagem.
+- Preservar o domínio atual e sua porta interna pública, normalmente `8000`.
+  Configurar `PORT` com o mesmo valor. Portas internas `18101` e `18102` não são
+  publicadas e não devem ser usadas como porta pública.
 
-O Bubble deve conservar os bytes do fornecedor e a URL do PDF padrão já gerado.
-A nova chamada envia o original para `/v2/documents` com `legacy_pdf_url` apontando
-para esse PDF padrão. Configurar os hosts exatos permitidos por organização em
-`PDF_LEGACY_PDF_HOSTS`; depois ativar `PDF_REQUIRE_LEGACY_PDF_URL=true`.
-Tokens ficam exclusivamente no backend do Bubble. O retorno inicial é assíncrono:
-é necessário consultar o processamento e concluir a revisão antes da entrega.
+Os arquivos originais `api_pdf.py`, `requirements.txt`, `Procfile`, `index.py` e
+`Dockerfile` continuam intactos para reversão. A imagem compartilhada usa Python
+3.12 e dois ambientes virtuais, mantendo as versões declaradas no requirements
+original separadas das versões da premium.
 
-## Reversão
+## 4. Configurar persistência e uma instância
 
-Se a premium falhar, parar somente seu serviço Compose. Preservar os volumes e os
-registros de chamadas concluídas ou incertas, evitando cobrança duplicada em uma
-retomada. Reimplantar uma versão premium validada pelo seu commit. Não executar
-`down --volumes`, não limpar o armazenamento e não alterar a API existente para
-resolver uma falha premium. Repetir as verificações de saúde e o smoke legado.
+Adicionar um volume nomeado exclusivo da premium ao MESMO serviço, montado
+diretamente em `/app/var`, gravável por UID/GID `10001:10001`. Preservar os volumes
+anteriores. O runtime verifica se esse diretório é um ponto de montagem.
+
+Usar uma réplica, volume local em nó fixo e atualização/reversão `stop-first`.
+Configurar tempo de parada de pelo menos 35 segundos. Um lock mantido pelo
+processo impede premium simultânea no mesmo volume. O banco inicial é SQLite WAL
+em `/app/var/state.sqlite3`; nenhum serviço PostgreSQL adicional é necessário.
+Não usar NFS nem copiar um arquivo SQLite ativo isoladamente como backup.
+Configurar backup consistente do banco pela API SQLite e dos arquivos do volume,
+com retenção privada e teste de restauração.
+
+## 5. Gerar e aplicar o ambiente
+
+Em uma cópia privada, executar dentro de `premium/`:
+
+```bash
+python3 scripts/setup_env.py --shared-service
+```
+
+O comando cria `.env` novo sem sobrescrever um existente e sem imprimir tokens.
+Ele já seleciona HTML, canonical_v1, SQLite e limites conservadores. Transferir os
+valores ao Environment do serviço existente, preservando as variáveis antigas.
+Preencher `OPENAI_API_KEY` e `PDF_PUBLIC_BASE_URL` com a chave privada e a origem
+HTTPS da API atual, sem caminho adicional. Conferir `.env.shared.example`.
+
+Valores essenciais: `PDF_PREMIUM_ENABLED=true`,
+`PDF_DATA_DIR=/app/var`, `DATABASE_URL=sqlite:////app/var/state.sqlite3`,
+`PDF_RENDER_MODE=html_template`, `PDF_PIPELINE_VERSION=canonical_v1` e o JSON real
+de `PDF_API_TOKENS`. Os limites iniciais são US$ 0,15/documento e US$ 0,30/dia em
+reservas estimadas, com reserva de busca de US$ 0,05 e limite de busca US$ 0,10/dia.
+Esses valores não representam uma cobrança exata nem substituem conferir o
+consumo real. Não instalar a chave ou o token no frontend do Bubble.
+
+## 6. Publicar e verificar
+
+Fazer deploy do serviço existente. Confirmar sua saúde e os processos legacy,
+premium, worker e gateway nos logs. O healthcheck da imagem verifica ambas as
+APIs e o heartbeat do worker, sem chamar IA. Remover healthcheck antigo do painel
+que ignore o da imagem ou configurar o mesmo teste de `shared_service/health.py`.
+
+No MESMO domínio atual, conferir:
+
+- `/openapi.json`: título original e rota `/generate-pdf/`.
+- `/premium/openapi.json`: schema premium com `/v2/documents`.
+- `/healthz`: HTTP 200, `html_template` e `canonical_v1`.
+- `/readyz`: HTTP 200 e `status=ready`.
+- Rota premium autenticada sem token: HTTP 401.
+
+Repetir o smoke legado em um cliente com dependências de teste instaladas:
+
+```bash
+# Da raiz do repositório:
+python premium/scripts/smoke_legacy_http.py --base-url https://HOST-ATUAL
+```
+
+Confirmar um PDF sintético de duas páginas e o resultado `Legacy contract passed`.
+Depois do primeiro restart/redeploy, verificar novamente saúde e persistência.
+Não enviar automaticamente um lote de clientes: a homologação paga começa com
+um único PDF, acompanhamento do registro de uso e revisão humana.
+
+## 7. Entregar para integração com Bubble
+
+Devolver URL atual, serviço/servidor, commit, resultado dos testes, configuração
+persistente do sandbox e evidência do backup. Compartilhar tokens por canal
+privado. A integração Bubble permanece separada: ela envia o original e
+`legacy_pdf_url` com a URL do PDF padrão. Configurar hosts exatos por tenant em
+`PDF_LEGACY_PDF_HOSTS` e exigir a URL antes de liberar a integração ao cliente.
+
+## Reversão e comportamento em falhas
+
+Com `PDF_PREMIUM_ENABLED=false`, a imagem compartilhada atende somente a API
+antiga. Se a premium tiver configuração inválida, a API antiga continua acessível
+e as rotas premium retornam 503; o healthcheck premium falha explicitamente.
+O supervisor recupera processos interrompidos. Reiniciar o container inteiro
+interrompe temporariamente ambas as APIs, uma consequência do serviço único.
+
+Para reverter a publicação, restaurar o build/comando/imagem registrados na etapa
+1 e manter o volume premium intacto. Preservar banco, artefatos e ledger de
+chamadas concluídas/incertas. Não apagar volumes nem repetir chamadas pagas
+incertas automaticamente. Confirmar novamente o smoke da API antiga.
