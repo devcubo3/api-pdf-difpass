@@ -12,11 +12,6 @@ existing Dokploy service**, sharing its public hostname and port.
 | `/premium/openapi.json` | Premium API schema |
 | `/healthz`, `/readyz` | Premium health and dependency readiness |
 
-Select `premium/Dockerfile.shared` with repository-root build context on the
-existing service. The original Dockerfile, Procfile, requirements and application
-source remain available and unchanged. Publishing this source alone does not
-switch the running application's build configuration.
-
 The shared image has independent virtual environments for the original pinned
 dependencies and the premium dependencies. Nginx routes one public port to the
 two loopback-only ASGI applications. Supervisor runs/restarts these processes and
@@ -36,23 +31,10 @@ persistent volume mounted at `/app/var`. A process-held file lock prevents two
 premium instances from sharing it. Use one replica, node placement matching the
 volume, and stop-first updates/rollbacks. A full service restart affects both APIs.
 
-See the Portuguese [existing-service deployment runbook](DEPLOYMENT.md) for
-environment, storage, sandbox requirements, verification and rollback.
-
 ## Synthetic validation
 
-Install `requirements-dev.txt` from this directory and run `python -m pytest -q`.
-The HTTP smoke uses an explicit synthetic provider, no real keys or customer data:
-
-```bash
-# Standalone API/worker regression, from premium/:
-python scripts/smoke_canonical_http.py --browser-channel chromium
-
-# Shared image, build from repository root:
-docker build -f premium/Dockerfile.shared -t difftravel-shared:test .
-# Then, from premium/:
-python scripts/smoke_canonical_http.py --shared-image difftravel-shared:test --browser-channel chromium
-```
+Continuous integration validates standalone and shared runtimes with an explicit
+synthetic provider, without real keys or customer data.
 
 The shared smoke verifies the old two-page PDF contract, actual premium PDF
 generation, authentication, worker crash recovery, persisted artifacts after a
