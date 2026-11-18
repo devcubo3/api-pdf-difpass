@@ -4,7 +4,7 @@ import io
 import time
 
 import httpx
-import pymupdf
+import fitz as pymupdf
 from PIL import Image
 from reportlab.pdfgen import canvas
 

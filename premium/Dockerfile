@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PDF_DATA_DIR=/app/var PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-por tesseract-ocr-eng ca-certificates && rm -rf /var/lib/apt/lists/*
