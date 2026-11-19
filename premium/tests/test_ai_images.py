@@ -370,3 +370,33 @@ def test_provider_quota_error_is_classified_without_exposing_raw_error(setup,pro
     assert usage[0]['usage']['provider_error_code']==provider_code
     assert usage[0]['usage']['retry_after']=='30'
     assert 'SYNTHETIC-PRIVATE-BODY' not in json.dumps(usage)
+
+
+@pytest.mark.parametrize('provider_code', ['server_is_overloaded', 'service_unavailable_error', None])
+def test_provider_503_stays_uncertain_and_is_not_retried(setup, provider_code):
+    settings, db = setup
+    row = db.enqueue(str(uuid4()), 'a', 'a' * 64, 'private.pdf')[0]
+    pipeline = ImagePipeline(settings, db, row, client=object())
+    attempts = []
+
+    def overloaded():
+        attempts.append('called')
+        raise APIStatusError('SYNTHETIC-PRIVATE-BODY', response=httpx.Response(
+            503, headers={'Retry-After': '6'},
+            request=httpx.Request('POST', 'https://api.openai.com/v1/responses')),
+            body={'error': {'code': provider_code, 'type': 'service_unavailable_error' if provider_code else 'generic_gateway_error',
+                            'message': 'SYNTHETIC-PRIVATE-BODY'}})
+
+    with pytest.raises(AIError) as failure:
+        pipeline.request('plan', settings.openai_text_model, 'overload', 'json', .1, overloaded)
+    assert failure.value.code == 'OPENAI_SERVICE_UNAVAILABLE'
+    assert 'conta/limites' not in failure.value.message
+    with pytest.raises(AIError, match='Chamada anterior incerta'):
+        pipeline.request('plan', settings.openai_text_model, 'overload', 'json', .1, overloaded)
+    assert attempts == ['called']
+    usage = pipeline.ledger.summary()
+    assert usage[0]['status'] == 'uncertain'
+    assert usage[0]['usage']['http_status'] == 503
+    assert usage[0]['usage']['retry_after'] == '6'
+    assert usage[0]['reserved_estimate_usd'] == .1
+    assert 'SYNTHETIC-PRIVATE-BODY' not in json.dumps(usage)

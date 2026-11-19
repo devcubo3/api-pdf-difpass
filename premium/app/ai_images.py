@@ -331,6 +331,8 @@ class ImagePipeline:
             error = error if isinstance(error,dict) else {}
             provider_code = error.get('code') or error.get('type') or getattr(exc,'code',None)
             messages = {
+                'server_is_overloaded':('OPENAI_SERVICE_UNAVAILABLE','A OpenAI está temporariamente sobrecarregada. Aguarde antes de solicitar uma nova tentativa controlada; não houve repetição automática.'),
+                'service_unavailable_error':('OPENAI_SERVICE_UNAVAILABLE','A OpenAI está temporariamente indisponível. Aguarde antes de solicitar uma nova tentativa controlada; não houve repetição automática.'),
                 'credit_balance_exhausted':('OPENAI_CREDIT_BALANCE_EXHAUSTED','A organização OpenAI está sem créditos pré-pagos. Regularize o saldo antes de tentar novamente.'),
                 'organization_spend_limit_exceeded':('OPENAI_ORGANIZATION_SPEND_LIMIT','A organização OpenAI atingiu seu limite financeiro configurado. Verifique o limite antes de tentar novamente.'),
                 'project_spend_limit_exceeded':('OPENAI_PROJECT_SPEND_LIMIT','O projeto OpenAI atingiu seu limite financeiro configurado. Verifique o limite antes de tentar novamente.'),
@@ -342,9 +344,13 @@ class ImagePipeline:
                 'model_not_found':('OPENAI_MODEL_ACCESS','O projeto OpenAI não tem acesso ao modelo configurado.'),
                 'invalid_api_key':('OPENAI_AUTHENTICATION','A OpenAI recusou a credencial privada configurada.'),
             }
-            code,message=messages.get(provider_code,(
+            fallback=(
                 {401:'OPENAI_AUTHENTICATION',403:'OPENAI_MODEL_ACCESS',429:'OPENAI_LIMIT'}.get(status,'OPENAI_REQUEST_FAILED'),
-                'A OpenAI não concluiu a solicitação; verificar conta/limites sem repetir automaticamente.'))
+                'A OpenAI não concluiu a solicitação; verificar conta/limites sem repetir automaticamente.')
+            if status == 503:
+                fallback=('OPENAI_SERVICE_UNAVAILABLE',
+                    'A OpenAI está temporariamente indisponível. Aguarde antes de solicitar uma nova tentativa controlada; não houve repetição automática.')
+            code,message=messages.get(provider_code,fallback)
             diagnostic={'http_status':status,'classified_error':code}
             for field in ('code','type'):
                 value=error.get(field)
