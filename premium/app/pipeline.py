@@ -127,10 +127,12 @@ def process_claim(settings: Settings, row: dict) -> None:
                     from .understanding import understand
                     from .document_schema import Fact
                     from .document_validation import validate_understanding
+                    from .entity_evidence import repair_public_entity_evidence
                     from .presentation import compile_presentation,public_context
                     document=understand(image_pipeline,extracted,source)
                     overrides=data.get('fact_overrides',{})
                     document.facts=[Fact.model_validate({**f.model_dump(),**overrides.get(f.id,{})}) for f in document.facts]
+                    data['evidence_repairs']=repair_public_entity_evidence(document,extracted)
                     data['understanding']=document.model_dump()
                     data['understanding_snapshot']=image_pipeline.understanding_snapshot
                     data['ai_cached_calls']=image_pipeline.stage_keys

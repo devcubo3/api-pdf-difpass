@@ -238,6 +238,51 @@ def test_http_worker_canonical_legacy_button_and_cache_only_correction(case,monk
         assert updated['events'][-1]['action']=='correct_facts'
 
 
+def test_public_entity_repair_survives_http_cache_only_rebuild(case,monkeypatch):
+    settings,source,_,_=case
+    with pymupdf.open(source) as pdf:
+        page=pdf.new_page()
+        page.insert_text((45,80),'Alpine Waters Resort')
+        page.insert_text((45,150),'Alpine Waters is located in Mountain City.')
+        pdf.saveIncr()
+    settings=replace(settings,pipeline_version='canonical_v1')
+    extracted=extract_document(source,settings.data_dir/'repair-codes',generic=True)
+    document=understood(extracted)
+    address=evidence(extracted,'Alpine Waters is located')
+    document.entities.append(Entity(id='place',role='property',name='Alpine Waters Resort',
+        locality='Mountain City',evidence=[address]))
+    document.services[0].entity_ids.append('place')
+    document.services[0].evidence.append(address)
+    assert any(i['code']=='ENTITY_EVIDENCE_REVIEW' for i in validate_understanding(document,extracted)[1])
+    original=document.model_dump()
+    calls=fake_provider(monkeypatch,document)
+    auth={'Authorization':'Bearer reviewer'}
+    with TestClient(create_app(settings)) as client:
+        created=client.post('/v2/documents',headers={**auth,'Idempotency-Key':'public-name-repair'},
+            files={'input_pdf':('synthetic.pdf',source.read_bytes(),'application/pdf')})
+        assert created.status_code==202,created.text
+        route='/v2/documents/'+created.json()['document_id']
+        assert process_next(settings)
+        review=client.get(route+'/review',headers=auth).json()
+        assert review['checks']['validations_passed'],review['issues']
+        assert review['checks']['codes_valid']
+        assert review['data']['evidence_repairs'][0]['entity_id']=='place'
+        snapshot=review['data']['understanding_snapshot']
+        from pathlib import Path
+        assert json.loads(Path(snapshot['path']).read_text(encoding='utf-8'))==original
+        resumed=client.post(route+'/retry-cache',headers={**auth,'If-Match':review['etag']},
+            json={'reason':'Synthetic cache-only evidence verification'})
+        assert resumed.status_code==202,resumed.text
+        def deny(**kwargs): raise AssertionError('Cache-only rebuild cannot call provider')
+        monkeypatch.setattr(ai_images,'OpenAI',deny)
+        assert process_next(replace(settings,openai_api_key=None))
+        updated=client.get(route+'/review',headers=auth).json()
+        assert updated['checks']['validations_passed'],updated['issues']
+        assert updated['data']['evidence_repairs']==review['data']['evidence_repairs']
+        assert updated['data']['understanding_snapshot']==snapshot
+        assert len(calls)==1
+
+
 def test_optional_photo_crash_preserves_document_and_sanitizes_diagnostic(case,monkeypatch):
     settings,source,extracted,document=generic_case(case)
     # A source-grounded public entity makes the media stage execute.
