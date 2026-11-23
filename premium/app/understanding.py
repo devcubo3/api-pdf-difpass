@@ -13,6 +13,9 @@ Não use ferramentas. Leia a fonte visual e os blocos identificados. Identifique
 serviços realmente contratados; menções em condições gerais não comprovam contratação.
 Pode haver várias pessoas, serviços, trechos, reservas e códigos na mesma página.
 Entidades, fatos e serviços devem citar trechos literais dos blocos por block_id.
+Cada evidência deve incluir todos os componentes usados: nome e locality, quando
+preenchidos. Contatos devem usar o título literal da fonte. Não acrescente um
+cabeçalho à identidade sem citar também o bloco desse cabeçalho.
 Use raw_value exatamente como consta na evidência, preservando zeros, datas, valores,
 moedas, unidades e nomes. Não complete ano, fuso, telefone ou aeroporto por suposição.
 Se uma informação estiver ambígua/ilegível, sinalize-a; ausente usa raw_value vazio.

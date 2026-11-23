@@ -24,6 +24,12 @@ def contains(value,text,*,financial=False):
         right=r'(?![\w]|[.,]\d)'
     elif value[-1].isdigit():
         right=r'(?![\w]|[.,]\d)'
+    # PDF text can glue a preceding label to a complete monetary expression.
+    # Relax only that leading letter boundary for number + explicit currency.
+    # The suffix, decimal prefix and sign checks remain intact; do not rewrite
+    # the quote or accept a substring of a longer amount/currency name.
+    if financial and re.fullmatch(r'\d[\d.,]*\s*(?:BRL|USD|EUR|GBP|Real Brasileiro|Reais Brasileiros)',value,re.I):
+        left=r'(?<![\d_])(?<!\d[.,])'
     matches=list(re.finditer(left+re.escape(value)+right,text,re.I))
     if financial:
         matches=[m for m in matches if not re.search(r'[-−+]\s*(?:R\$|US\$|USD|BRL|\$|€|£)?\s*$',text[:m.start()],re.I)]
@@ -33,6 +39,31 @@ def contains(value,text,*,financial=False):
 def source_blocks(extracted):
     return {f'p{p["page"]}-b{i+1}':{**b,'page':p['page']}
             for p in extracted['pages'] for i,b in enumerate(p['blocks'])}
+
+
+def contact_heading_grounded(entity,blocks):
+    """A contact title may join two consecutive literal source headings.
+
+    This is a structural separator, never a licence to paraphrase an identity.
+    Both quotations must be valid, and both headings must be explicitly cited.
+    """
+    if entity.role!='contact' or entity.locality or len(entity.name.split(' — '))!=2:
+        return False
+    first,second=entity.name.split(' — ')
+    for previous in entity.evidence:
+        match=re.fullmatch(r'p(\d+)-b(\d+)',previous.block_id)
+        if not match or previous.block_id not in blocks:
+            continue
+        following_id=f'p{match[1]}-b{int(match[2])+1}'
+        for following in entity.evidence:
+            if following.block_id!=following_id or following_id not in blocks:
+                continue
+            pairs=((first,previous),(second,following))
+            if all(literal(blocks[e.block_id]['text'].split('\n',1)[0]).casefold()==literal(part).casefold()
+                   and contains(part,e.quote) and contains(e.quote,blocks[e.block_id]['text'])
+                   for part,e in pairs):
+                return True
+    return False
 
 
 def issue(code,message,*,path=None,blocking=True,evidence=None):
@@ -66,7 +97,9 @@ def validate_understanding(document,extracted):
             and contains(spacing(value),spacing(blocks[e.block_id]['text']),financial=financial) for e in evidence)
 
     for entity in document.entities:
-        if not grounded(entity.name,entity.evidence) or entity.locality and not grounded(entity.locality,entity.evidence):
+        if (not (grounded(entity.name,entity.evidence)
+                 or evidence_ok(entity.evidence) and contact_heading_grounded(entity,blocks))
+                or entity.locality and not grounded(entity.locality,entity.evidence)):
             issues.append(issue('ENTITY_EVIDENCE_REVIEW','Identidade sem trecho correspondente na fonte.',
                 path=f'entities.{entity.id}',evidence=entity.evidence))
     for service in document.services:

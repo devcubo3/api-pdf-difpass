@@ -82,7 +82,7 @@ class MeasuredDocument:
                 continue
             _,page=matches[0]
             anchors=page.anchors
-            required={'sheet','content','hero','photo','heading','footer'}
+            required={'sheet','content','hero','photo','heading','eyebrow','footer'}
             required.update('card-'+str(n) for n in range(1,len(expected.sections)+1))
             if expected.code_id: required.update({'qr','code'})
             if any(prefix+'-'+name+'-'+point not in anchors
@@ -120,6 +120,7 @@ class MeasuredDocument:
             if expected.code_id:
                 codes=[{'id':expected.code_id,'page':index,'bbox':[x*72/96 for x in box('code')]}]
             layout.append({'page':index,'passed':passed,'compact':False,'codes':codes,
+                'text_tracking_boxes':[[x*72/96 for x in box('eyebrow')]],
                 'header':{'passed':header_passed,'box':relative(hero),'photo_frame':relative(photo),
                           'photo_visible':self.photo_visible}})
         if len(self.document.pages)!=len(plan.pages) and all(item['passed'] for item in layout):

@@ -32,9 +32,10 @@ from .media_context import PublicContext, MEDIA_PLANNING_INSTRUCTIONS
 
 
 class AIError(ValueError):
-    def __init__(self, code, message):
+    def __init__(self, code, message, *, checks=None):
         super().__init__(message)
         self.code, self.message = code, message
+        self.checks = checks or {}
 
 
 class StrictModel(BaseModel):

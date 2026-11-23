@@ -3,12 +3,53 @@
 Never change values, repair people, replace invalid quotations or infer localities.
 The paid understanding snapshot and the extracted source remain immutable.
 """
+import re
+
 from .document_schema import Evidence
 from .document_validation import contains, literal, source_blocks, validate_understanding
 
 
 def repair_public_entity_evidence(document, extracted):
     blocks = source_blocks(extracted)
+    repairs = []
+
+    def existing_valid(entity):
+        return bool(entity.evidence) and all(e.block_id in blocks and e.quote.strip()
+            and contains(e.quote,blocks[e.block_id]['text']) for e in entity.evidence)
+
+    for entity in document.entities:
+        if entity.role not in {'property','location','provider','contact'} or not existing_valid(entity):
+            continue
+        before=[e.block_id for e in entity.evidence]
+        # Expand only an already cited block, with every unchanged identity
+        # component literally present there. Never borrow from another service.
+        for item in list(entity.evidence):
+            text=blocks[item.block_id]['text']
+            if (contains(entity.name,text) and (not entity.locality or contains(entity.locality,text))
+                    and (not any(contains(entity.name,e.quote) for e in entity.evidence)
+                         or entity.locality and not any(contains(entity.locality,e.quote) for e in entity.evidence))):
+                entity.evidence.append(Evidence(block_id=item.block_id,quote=text))
+                repairs.append({'entity_id':entity.id,'field':'evidence','from_block_ids':before,
+                                'added_block_id':item.block_id,'policy':'cited_block_evidence_v1'})
+                break
+        # Preserve a composed contact title only when its two literal headings
+        # occupy consecutive blocks and the second block was already cited.
+        if entity.role=='contact' and not entity.locality and len(entity.name.split(' — '))==2:
+            first,second=entity.name.split(' — ')
+            for item in list(entity.evidence):
+                match=re.fullmatch(r'p(\d+)-b(\d+)',item.block_id)
+                if not match or int(match[2])<=1:
+                    continue
+                previous_id=f'p{match[1]}-b{int(match[2])-1}'
+                previous=blocks.get(previous_id)
+                if (previous and literal(previous['text'].split('\n',1)[0]).casefold()==literal(first).casefold()
+                        and literal(blocks[item.block_id]['text'].split('\n',1)[0]).casefold()==literal(second).casefold()
+                        and contains(second,item.quote)
+                        and not any(e.block_id==previous_id and contains(first,e.quote) for e in entity.evidence)):
+                    entity.evidence.append(Evidence(block_id=previous_id,quote=previous['text'].split('\n',1)[0]))
+                    repairs.append({'entity_id':entity.id,'field':'name','from_block_ids':before,
+                                    'added_block_id':previous_id,'policy':'contact_heading_evidence_v1'})
+                    break
     _, issues = validate_understanding(document, extracted)
     invalid = {item.get('field') for item in issues if item.get('blocking')}
     condition_blocks = {e.block_id for condition in document.conditions for e in condition.evidence}
@@ -38,7 +79,6 @@ def repair_public_entity_evidence(document, extracted):
                 if service_id in services and f'services.{service_id}' not in invalid:
                     own(codes[association.code_id]['source_page'], service_id)
 
-    repairs = []
     for entity in document.entities:
         if (entity.role not in {'property', 'location', 'provider'}
                 or not valid(entity.evidence) or grounded(entity.name, entity.evidence)

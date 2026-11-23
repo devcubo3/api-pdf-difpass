@@ -23,8 +23,9 @@ from .customer_presentation import prepare_customer_plan
 from .typography import emphasis_segments,bullet_view
 from .hotel_preservation import preserve_hotel_data
 from .media_context import primary_place
+from .pdf_text import extract_printed_text
 
-TEMPLATE_VERSION = 'difftravel-html-v14-safety-download'
+TEMPLATE_VERSION = 'difftravel-html-v15-measured-text'
 TEMPLATE_DIR = Path(__file__).parent / 'html_templates'
 ICONS = {
     'neutral':'<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>',
@@ -145,7 +146,10 @@ MEASURE_LAYOUT = """() => [...document.querySelectorAll('.sheet')].map((sheet, i
    return {id:el.dataset.codeId,page:index+1,
      bbox:[b.left-bounds.left,b.top-bounds.top,b.right-bounds.left,b.bottom-bounds.top].map(v=>v*72/96)};
  });
+ const tracked=sheet.querySelector('.eyebrow').getBoundingClientRect();
  return {page:index+1,passed:!overflow,compact:sheet.classList.contains('compact'),codes,
+   text_tracking_boxes:[[tracked.left-bounds.left,tracked.top-bounds.top,
+                         tracked.right-bounds.left,tracked.bottom-bounds.top].map(v=>v*72/96)],
    header:{passed:headerPassed,box:relative(header),photo_frame:relative(frame),photo_visible:!!scene}};
 })"""
 
@@ -213,6 +217,8 @@ def check_pdf_text(text: str, page) -> dict:
     coverage = sum((expected & actual).values()) / max(1, sum(expected.values()))
     critical = all(critical_value_present(v,text) for v in page.critical_values)
     return {'passed':coverage == 1 and critical, 'word_coverage':round(coverage,4),
+            'missing_word_count':sum((expected-actual).values()),
+            'missing_critical_count':sum(not critical_value_present(v,text) for v in page.critical_values),
             'critical_values_match':critical, 'verification':'pdf_text_layer'}
 
 
@@ -313,12 +319,11 @@ def render_html_document(settings, plan, coverage, extracted, output_dir, planne
                 pdf_page.insert_image(target,filename=code['path'],overlay=True)
                 placements.append({'id':code['id'],'page':index+1,'bbox':list(target),
                                    'path':str(Path(code['path']).resolve())})
-            # Chromium positions tracked headings glyph by glyph. Inhibit only
-            # MuPDF's inferred spaces; genuine word-space glyphs remain intact.
-            text=pdf_page.get_text(flags=fitz.TEXTFLAGS_TEXT | fitz.TEXT_INHIBIT_SPACES)
+            text=extract_printed_text(pdf_page,layout[index]['text_tracking_boxes'])
             text_checks.append({'page':index+1,**check_pdf_text(text,selected[index])})
         if not all(item['passed'] for item in text_checks):
-            raise AIError('HTML_TEXT_MISMATCH','O PDF não preservou todo o texto planejado. Não liberar.')
+            raise AIError('HTML_TEXT_MISMATCH','O PDF não preservou todo o texto planejado. Não liberar.',
+                          checks={'template_text':text_checks,'html_engine':settings.html_engine})
         pdf.set_metadata({'title':plan.title,'author':'Diff Travel','subject':'Documento premium'})
         if original_download:
             links=[link for link in pdf[-1].get_links() if link.get('uri')==original_download['url']]

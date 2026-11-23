@@ -29,7 +29,7 @@ html,body {margin:0;padding:0;background:#fff;color:var(--ink);font-family:Diff,
 .mascot {position:absolute;left:58mm;bottom:4.5mm;width:23mm;height:29mm;object-fit:contain;object-position:center bottom;z-index:2}
 .wave {position:absolute;bottom:-.2mm;width:100%;height:10mm;left:0;z-index:3}
 .heading {padding:7mm 13mm 4mm;flex:0 0 auto;position:relative}
-.eyebrow {margin:0 0 2mm;text-transform:uppercase;letter-spacing:1.3pt;font-size:7.6pt;color:var(--copper);font-weight:700}
+.eyebrow {position:relative;margin:0 0 2mm;text-transform:uppercase;letter-spacing:1.3pt;font-size:7.6pt;color:var(--copper);font-weight:700}
 h1 {margin:0;color:var(--navy);font-size:26pt;line-height:1.12;letter-spacing:-.8pt;max-width:182mm;overflow-wrap:anywhere}
 .intro {font-size:9pt;line-height:1.5;margin:3mm 0 0;max-width:177mm;border-left:.8mm solid #c77843;padding:1mm 0 1mm 3mm;color:#526772}
 .content {flex:1;min-height:0;margin:0 13mm;position:relative}
@@ -153,7 +153,7 @@ strong.emphasis-restriction {color:#a52f32}
 <img class="mascot" src="{{ mascot }}" alt="DifBot">
 <svg class="wave" viewBox="0 0 1000 80" preserveAspectRatio="none" aria-hidden="true"><path d="M0 5 C370 90 640 -35 1000 36 L1000 80 L0 80Z" fill="#b94f18"/><path d="M0 16 C370 96 640 -23 1000 47 L1000 80 L0 80Z" fill="#073b55"/><path d="M0 37 C370 112 640 -3 1000 65 L1000 80 L0 80Z" fill="#fcfaf6"/></svg>
 </header>
-<div class="heading">{{ measure_box(prefix ~ '-heading') }}<p class="eyebrow">{{ item.page.eyebrow }}</p><h1>{{ item.page.title }}</h1>{% if item.page.introduction %}<p class="intro">{{ rich(item.introduction) }}</p>{% endif %}</div>
+<div class="heading">{{ measure_box(prefix ~ '-heading') }}<p class="eyebrow">{{ measure_box(prefix ~ '-eyebrow') }}{{ item.page.eyebrow }}</p><h1>{{ item.page.title }}</h1>{% if item.page.introduction %}<p class="intro">{{ rich(item.introduction) }}</p>{% endif %}</div>
 <main class="content">
 {{ measure_box(prefix ~ '-content') }}
 <div class="top-grid{% if not item.page.code_id %} no-code{% elif item.wide_code %} wide-code{% endif %}">

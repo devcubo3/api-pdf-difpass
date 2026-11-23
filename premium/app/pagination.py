@@ -91,11 +91,15 @@ def paginate_measured(plan,measure_plan,max_pages):
         if len(result.pages)>max_pages:
             raise AIError('HTML_OUTPUT_PAGE_LIMIT','O documento requer mais páginas do que o limite configurado.')
         layout,markup=measure_plan(result)
-        failure=next((i for i,x in enumerate(layout) if not x['passed']),None)
-        if failure is None:
+        failures=[i for i,x in enumerate(layout) if not x['passed']]
+        if not failures:
             return compact_measured(result,measure_plan)
-        first,second=split_page(result.pages[failure])
-        result.pages[failure:failure+1]=[first,second]
+        # Geometry already identifies every overflowing logical page. Split
+        # independent failures together rather than rendering the entire long
+        # document again after each single split. All new pages are remeasured.
+        for failure in reversed(failures):
+            first,second=split_page(result.pages[failure])
+            result.pages[failure:failure+1]=[first,second]
     raise AIError('HTML_PAGINATION_LIMIT','A paginação não convergiu dentro do limite seguro.')
 
 

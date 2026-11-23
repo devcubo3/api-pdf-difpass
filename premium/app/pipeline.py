@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -67,11 +68,19 @@ def process_claim(settings: Settings, row: dict) -> None:
     attempt_dir = store.revision_dir(row['id'], row['revision']) / f'attempt-{uuid4().hex}'
     attempt_dir.mkdir()
     stage='integrity'
+    started=stage_started=time.monotonic()
+    timings={}
     canonical=row['data_json'].get('pipeline_version')=='canonical_v1'
     data=dict(row['data_json'])
+    def record_timing():
+        timings[stage]=round(time.monotonic()-stage_started,3)
+        data['processing_timings']={'stages_seconds':dict(timings),
+                                    'worker_total_seconds':round(time.monotonic()-started,3)}
     def checkpoint(next_stage):
-        nonlocal row,stage
+        nonlocal row,stage,stage_started
+        record_timing()
         stage=next_stage
+        stage_started=time.monotonic()
         data['processing_stage']=stage
         if 'image_pipeline' in locals():
             data['ai_cached_calls']=image_pipeline.stage_keys
@@ -82,7 +91,7 @@ def process_claim(settings: Settings, row: dict) -> None:
         source = Path(row['source_path'])
         if hashlib.sha256(store.read(source)).hexdigest() != row['source_sha']:
             raise ValueError('Source integrity mismatch')
-        stage='extraction'
+        checkpoint('extraction')
         if canonical and settings.render_mode!='html_template':
             raise AIError('PIPELINE_RUNTIME_MISMATCH','O pipeline canonical_v1 exige o modo HTML.')
         extracted = extract_document(source, attempt_dir / 'codes', row['doc_type'],generic=canonical)
@@ -110,6 +119,7 @@ def process_claim(settings: Settings, row: dict) -> None:
             data['media_search']=row['data_json']['media_search']
         if not data['sections'] and not extracted['codes']:
             data['evidence'] = extracted['pages']
+            record_timing()
             db.update_document(row['id'], row['tenant_id'], row['etag'], status='needs_review',
                                data_json=data, issues_json=extracted['issues'],
                                artifacts_json={'history':row['artifacts_json'].get('history', {}),
@@ -243,7 +253,7 @@ def process_claim(settings: Settings, row: dict) -> None:
         if preview:
             placed={p['id'] for p in rendered['code_placements']}
             checked_codes=[c for c in extracted['codes'] if c['id'] in placed]
-        stage='artifact_validation'
+        checkpoint('artifact_validation')
         checks = verify_artifacts(rendered, checked_codes)
         issues = extracted['issues']
         checks['render_mode'] = rendered['render_mode']
@@ -316,6 +326,7 @@ def process_claim(settings: Settings, row: dict) -> None:
             checks['blocking_issues']+=1
             checks['validations_passed']=False
         data['processing_stage']='ready' if event else 'review'
+        record_timing()
         db.update_document(row['id'], row['tenant_id'], row['etag'], status='ready' if event else 'needs_review',
                            data_json=data, artifacts_json=artifacts, issues_json=issues,
                            doc_type=data['document_type'],review_event=event)
@@ -323,16 +334,25 @@ def process_claim(settings: Settings, row: dict) -> None:
         try:
             failure_data=locals().get('data', {})
             failure_data['processing_stage']=stage
+            record_timing()
             if 'image_pipeline' in locals():
                 failure_data['ai_cached_calls']=image_pipeline.stage_keys
             if 'extracted' in locals():
                 failure_data['evidence']=extracted['pages']
+            failure={'code':exc.code,'blocking':True,'message':exc.message}
+            previous=locals().get('extracted',{}).get('issues',[])
+            issues=[failure]+[item for item in previous if item!=failure]
+            details=getattr(exc,'checks',{})
             db.update_document(row['id'], row['tenant_id'], row['etag'], status='needs_review',
                 data_json=failure_data,
-                issues_json=[{'code':exc.code,'blocking':True,'message':exc.message}],
+                issues_json=issues,
+                doc_type=failure_data.get('document_type',row['doc_type']),
                 artifacts_json={'history':row['artifacts_json'].get('history',{}),
                                 'checks':{'validations_passed':False,'render_mode':settings.render_mode,
-                                          'ai_usage':BudgetLedger(db,row).summary()}})
+                                          'ai_usage':BudgetLedger(db,row).summary(),
+                                          'blocking_issues':sum(bool(item.get('blocking')) for item in issues),
+                                          'canonical':failure_data.get('canonical_validation'),
+                                          **{key:details[key] for key in ('template_text','html_engine') if key in details}}})
         except ConcurrentUpdate:
             pass
     except ConcurrentUpdate:
@@ -342,6 +362,7 @@ def process_claim(settings: Settings, row: dict) -> None:
         log.error('Processing failed document=%s diagnostic=%s', row['id'], diagnostic)
         try:
             failure_data=locals().get('data',row['data_json'])
+            record_timing()
             failure_data['diagnostic']=diagnostic
             failure_data['processing_stage']=stage
             if 'image_pipeline' in locals():
