@@ -154,3 +154,24 @@ def test_independent_overflows_are_remeasured_together_without_losing_cards():
     assert all(item['passed'] for item in layout)
     assert [p.code_id for p in result.pages if p.code_id]==[p.code_id for p in pages]
     assert [s.bullets for p in result.pages for s in p.sections]==[s.bullets for p in pages for s in p.sections]
+
+
+def test_displacement_from_a_previous_overflow_does_not_split_an_atomic_code_page():
+    from app.pagination import paginate_measured
+    first=Page(title='Dados',eyebrow='Viagem',introduction='',code_id='first',
+        source_block_ids=['p1-b1'],critical_values=[],
+        sections=[Section(title='Dados',tone='neutral',bullets=['Primeiro']),
+                  Section(title='Dados',tone='neutral',bullets=['Segundo'])])
+    atomic=Page(title='Código',eyebrow='Viagem',introduction='',code_id='atomic',
+        source_block_ids=['p2-b1'],critical_values=[],sections=[])
+    def measure(plan):
+        preceding_overflow=False;layout=[]
+        for item in plan.pages:
+            overflow=len(item.sections)>1
+            layout.append({'passed':not overflow and not preceding_overflow,'split_needed':overflow})
+            preceding_overflow|=overflow
+        return layout,'synthetic markup'
+    result,layout,_=paginate_measured(Plan(title='Viagem',pages=[first,atomic],omitted_blocks=[]),measure,10)
+    assert all(item['passed'] for item in layout)
+    assert len(result.pages)==3
+    assert result.pages[-1].code_id=='atomic' and result.pages[-1].sections==[]

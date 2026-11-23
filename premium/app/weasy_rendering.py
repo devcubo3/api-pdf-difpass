@@ -76,11 +76,11 @@ class MeasuredDocument:
             prefix=f'dt-p{index}'
             matches=[(n,page) for n,page in enumerate(self.document.pages,1)
                      if prefix+'-sheet-start' in page.anchors]
-            if len(matches)!=1 or matches[0][0]!=index:
+            if len(matches)!=1:
                 layout.append({'page':index,'passed':False,'codes':[],'compact':False,
                                'header':{'passed':False}})
                 continue
-            _,page=matches[0]
+            actual_index,page=matches[0]
             anchors=page.anchors
             required={'sheet','content','hero','photo','heading','eyebrow','footer'}
             required.update('card-'+str(n) for n in range(1,len(expected.sections)+1))
@@ -119,7 +119,8 @@ class MeasuredDocument:
             codes=[]
             if expected.code_id:
                 codes=[{'id':expected.code_id,'page':index,'bbox':[x*72/96 for x in box('code')]}]
-            layout.append({'page':index,'passed':passed,'compact':False,'codes':codes,
+            layout.append({'page':index,'passed':passed and actual_index==index,
+                'split_needed':not passed,'compact':False,'codes':codes,
                 'text_tracking_boxes':[[x*72/96 for x in box('eyebrow')]],
                 'header':{'passed':header_passed,'box':relative(hero),'photo_frame':relative(photo),
                           'photo_visible':self.photo_visible}})
