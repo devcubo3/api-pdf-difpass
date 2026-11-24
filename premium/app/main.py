@@ -120,7 +120,7 @@ class MediaSearchRequest(Reprocess):
     source_page_url: str | None = Field(default=None,max_length=2500)
     locality: str | None = Field(default=None,min_length=3,max_length=120)
     kind: Literal['hotel','attraction','destination'] | None = None
-    provider: Literal['auto','official','brave','pexels','openai'] = 'auto'
+    provider: Literal['auto','official','brave','pexels','openai','serpapi'] = 'auto'
     allow_paid_search: bool = False
     auto_select: bool = False
 
@@ -260,7 +260,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {'status': 'ok', 'version': '2.0.0', 'render_mode':settings.render_mode,
                 'pipeline_version':settings.pipeline_version,'html_engine':settings.html_engine,
                 'review_policy':settings.review_policy,'media_mode':settings.media_mode,
-                'media_auto_use_policy':settings.media_auto_use_policy}
+                'media_auto_use_policy':settings.media_auto_use_policy,
+                'serpapi_configured':bool(settings.serpapi_api_key)}
 
     @api.get('/readyz')
     def ready():

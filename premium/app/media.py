@@ -24,6 +24,7 @@ from .media_fetch import MediaError,PublicFetcher,public_url
 from .storage import Storage
 from .media_context import safe_public
 from .media_web import WebDiscovery
+from .media_serpapi import SerpApiImages
 
 SEARCH_LOCK=threading.RLock()
 SOURCE_DIRECTORY=Path(__file__).resolve().parents[1]/'assets/media/sources.json'
@@ -353,6 +354,7 @@ class PhotoSearch:
         self.catalog=MediaCatalog(settings,tenant_id)
         self._fetcher=fetcher
         self.web=WebDiscovery(settings,db,row,self.catalog.root/'searches',allow_paid=allow_paid)
+        self.serpapi=SerpApiImages(settings,db,row,self.catalog.root/'searches',allow_paid=allow_paid)
 
     @property
     def fetcher(self):
@@ -413,12 +415,13 @@ class PhotoSearch:
         subject=' '.join(subject.split())
         if not safe_public(subject) or (locality and not safe_public(locality)):
             raise MediaError('MEDIA_CONTEXT_INVALID','Informe apenas o nome público do destino, hotel ou atração.')
-        if provider not in {'auto','official','brave','pexels','openai'}:
+        if provider not in {'auto','official','brave','pexels','openai','serpapi'}:
             raise MediaError('MEDIA_PROVIDER_INVALID','Provedor de busca inválido.')
         source_url=public_url(source_url) if source_url else None
         source_digest=hashlib.sha256(Path(self.settings.media_sources_file).read_bytes()).hexdigest()
         key=hashlib.sha256(json.dumps([normalized(subject),source_url,provider,source_digest,
-            normalized(locality or ''),kind,'context-v8-automatic-scenic'],ensure_ascii=False).encode()).hexdigest()
+            normalized(locality or ''),kind,bool(self.settings.serpapi_api_key),
+            'context-v9-serpapi-images'],ensure_ascii=False).encode()).hexdigest()
         cache=self.catalog.root/'searches'/f'{key}.json'
         with SEARCH_LOCK:
             if cache.is_file():
@@ -427,7 +430,9 @@ class PhotoSearch:
                     for candidate in saved['candidates']:
                         self.catalog.load(candidate['id'])
                     return {**saved,'cache_hit':True,'search_usage':{'cache_hit':True,'new_calls':0,'reserved_estimate_usd':0}}
-            pages=self.discover_pages(subject,source_url,provider,locality,kind)
+            use_serpapi=provider=='serpapi' or (provider=='auto' and not source_url
+                and self.settings.serpapi_api_key and not self.source_for(subject))
+            pages=[] if use_serpapi else self.discover_pages(subject,source_url,provider,locality,kind)
             candidates=[]
             errors=[]
             if not pages and self.settings.pexels_api_key and provider=='pexels':
@@ -495,6 +500,8 @@ class PhotoSearch:
                     errors.append(exc.code)
                 if len(candidates)>=4:
                     break
+            if use_serpapi or (not candidates and provider=='auto' and not source_url and self.settings.serpapi_api_key):
+                candidates.extend(self.serpapi_candidates(subject,locality,kind,errors))
             candidates=list({c['id']:c for c in candidates}.values())
             candidates.sort(key=lambda item:item['score'],reverse=True)
             if not candidates:
@@ -502,9 +509,60 @@ class PhotoSearch:
             result={'subject':subject,'locality':locality,'kind':kind,'entity':candidates[0]['entity'],'provider':provider,'created_at':int(time.time()),
                     'google_maps_url':'https://www.google.com/maps/search/?'+urlencode({'api':1,'query':candidates[0]['entity']}),
                     'candidates':candidates[:4],'cache_hit':False,'diagnostics':sorted(set(errors)),
-                    'search_usage':self.web.usage or {'new_calls':0,'reserved_estimate_usd':0}}
+                    'search_usage':self.serpapi.usage or self.web.usage or {'new_calls':0,'reserved_estimate_usd':0}}
             Storage._write_atomic(cache,json.dumps(result,ensure_ascii=False).encode())
             return result
+
+    def serpapi_candidates(self,subject,locality,kind,errors):
+        results=self.serpapi.search({'name':subject,'locality':locality,'kind':kind})
+        known=self.source_for(subject)
+        official_host=urlsplit(known['page_url']).hostname.removeprefix('www.') if known else None
+        ranked=[]
+        for item in results:
+            try:
+                page=public_url(item.get('link',''));image=public_url(item.get('original',''))
+                # Use originals on publisher/CDN hosts, never Google Maps photos,
+                # search thumbnails or SerpApi's cached thumbnail endpoint.
+                blocked=('googleusercontent.com','ggpht.com','googleapis.com','gstatic.com','google.com','serpapi.com')
+                if any((urlsplit(value).hostname==domain or urlsplit(value).hostname.endswith('.'+domain))
+                       for value in (page,image) for domain in blocked):
+                    continue
+                title=str(item.get('title',''))[:250]
+                evidence=title+' '+unquote(urlsplit(page).path).replace('-',' ').replace('_',' ')
+                if item.get('is_product') or not matches_entity(subject,evidence):
+                    continue
+                width,height=item.get('original_width'),item.get('original_height')
+                if isinstance(width,(int,float)) and isinstance(height,(int,float)):
+                    if height<=0 or width<900 or height<350 or not 1.3<=width/height<=3.5:
+                        continue
+                host=urlsplit(page).hostname.removeprefix('www.')
+                official=host==official_host
+                if locality and not official and not matches_entity(locality,evidence):
+                    continue
+                score=photo_score(image,title,40 if official else 10)
+                if score<0:
+                    continue
+                source={'page_url':page,'publisher':str(item.get('source') or host)[:100],
+                        'title':title,'entity':subject,'authority':'official' if official else 'web_candidate',
+                        'provider':'serpapi_google_images','image_context':title,'rights_status':'permission_pending'}
+                ranked.append((score,image,source))
+            except (MediaError,ValueError,TypeError):
+                continue
+        candidates=[];seen=set()
+        for score,image,source in sorted(ranked,key=lambda item:item[0],reverse=True):
+            if image in seen:
+                continue
+            seen.add(image)
+            if len(seen)>8:
+                break
+            try:
+                fetched=self.fetcher.get(image,max_bytes=8_000_000)
+                candidates.append(self.catalog.save_photo(fetched,source,score))
+            except MediaError as exc:
+                errors.append(exc.code)
+            if len(candidates)>=4:
+                break
+        return candidates
 
 
 def choose_candidate(result,document_id):

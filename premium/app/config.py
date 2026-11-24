@@ -34,6 +34,7 @@ class Settings:
     media_sources_file: Path = Path(__file__).resolve().parents[1] / 'assets/media/sources.json'
     brave_search_api_key: str | None = field(default=None,repr=False)
     pexels_api_key: str | None = field(default=None,repr=False)
+    serpapi_api_key: str | None = field(default=None,repr=False)
     media_openai_search_enabled: bool = False
     media_search_reserve_usd: float = .05
     media_search_daily_budget_usd: float = .10
@@ -185,6 +186,7 @@ class Settings:
             media_sources_file=Path(os.getenv('PDF_MEDIA_SOURCES_FILE',str(cls.__dataclass_fields__['media_sources_file'].default))),
             brave_search_api_key=os.getenv('BRAVE_SEARCH_API_KEY') or None,
             pexels_api_key=os.getenv('PEXELS_API_KEY') or None,
+            serpapi_api_key=os.getenv('SERPAPI_KEY') or None,
             media_openai_search_enabled=os.getenv('PDF_MEDIA_OPENAI_SEARCH_ENABLED','false').lower()=='true',
             media_search_reserve_usd=float(os.getenv('PDF_MEDIA_SEARCH_RESERVE_USD','.05')),
             media_search_daily_budget_usd=float(os.getenv('PDF_MEDIA_SEARCH_DAILY_BUDGET_USD','.10')),
