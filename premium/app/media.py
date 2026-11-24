@@ -212,10 +212,12 @@ def photo_score(url,alt,base=0):
         if word in text:
             score+=10
     if any(word in text for word in ('fachada','exterior','aerea','aerial','panoram','vista hotel')):
-        score+=25
+        score+=60
     for word in ('mobile','quarto','suite','apartamento','acomodac','gastronom','restaurante','familia','pessoas'):
         if word in text:
             score-=35
+    if any(word in text for word in ('casamento','wedding','cerimonia','eventos','conference','meeting')):
+        score-=90
     return score
 
 
@@ -365,11 +367,15 @@ class PhotoSearch:
             sources=json.loads(Path(path).read_text(encoding='utf-8'))['sources']
         except (OSError,ValueError,KeyError):
             raise MediaError('MEDIA_SOURCES_CONFIG','Catálogo de fontes de imagens inválido.') from None
+        exact=[];equivalent=[]
         for source in sources:
             names=source.get('aliases',[])+[source['entity']]
             if normalized(subject) in {normalized(alias) for alias in names if len(normalized(alias))>2}:
-                return source
-        return None
+                exact.append(source)
+            elif any(matches_entity(alias,subject) and matches_entity(subject,alias) for alias in names):
+                equivalent.append(source)
+        matches=exact or equivalent
+        return matches[0] if len(matches)==1 else None
 
     def discover_pages(self,subject,source_url,provider,locality=None,kind=None):
         known=self.source_for(subject)
@@ -412,7 +418,7 @@ class PhotoSearch:
         source_url=public_url(source_url) if source_url else None
         source_digest=hashlib.sha256(Path(self.settings.media_sources_file).read_bytes()).hexdigest()
         key=hashlib.sha256(json.dumps([normalized(subject),source_url,provider,source_digest,
-            normalized(locality or ''),kind,'context-v6-srcset-avif-originals'],ensure_ascii=False).encode()).hexdigest()
+            normalized(locality or ''),kind,'context-v8-automatic-scenic'],ensure_ascii=False).encode()).hexdigest()
         cache=self.catalog.root/'searches'/f'{key}.json'
         with SEARCH_LOCK:
             if cache.is_file():

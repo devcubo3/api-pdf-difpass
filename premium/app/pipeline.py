@@ -25,6 +25,7 @@ from .media_fetch import MediaError
 from .media_context import grounded_context,legacy_context,primary_place
 from .original_download import issue_original_download
 from .diagnostics import safe_error
+from .automatic_media import select_automatic_photo
 
 log = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ def process_claim(settings: Settings, row: dict) -> None:
         data['overrides'] = overrides
         data['generation_scope']=row['data_json'].get('generation_scope','full')
         for key in ('pipeline_version','legacy_pdf_url','understanding_snapshot','fact_overrides','requested_document_type',
-                    'ai_cache_only','ai_plan_cache_only','ai_cached_calls','release_policy'):
+                    'ai_cache_only','ai_plan_cache_only','ai_cached_calls','release_policy','media_refresh_allow_paid'):
             if key in row['data_json']:
                 data[key]=row['data_json'][key]
         data['evidence']=extracted['pages']
@@ -117,6 +118,8 @@ def process_claim(settings: Settings, row: dict) -> None:
             data['media_selection']=selection
         if row['data_json'].get('media_search'):
             data['media_search']=row['data_json']['media_search']
+        if row['data_json'].get('media_decision'):
+            data['media_decision']=row['data_json']['media_decision']
         if not data['sections'] and not extracted['codes']:
             data['evidence'] = extracted['pages']
             record_timing()
@@ -174,23 +177,18 @@ def process_claim(settings: Settings, row: dict) -> None:
                     data['media_context']=legacy_context(data)
                 checkpoint('media')
                 if automatic and not (selection and selection.get('permission_confirmed')):
-                    # Do not pay to discover a photo that cannot be delivered.
-                    # Approval is scoped by tenant and an exact grounded place.
-                    selection=None
-                    data.pop('media_selection',None)
-                    data.pop('photo_provenance',None)
                     try:
-                        approved=MediaCatalog(settings,row['tenant_id']).preapproved(primary_place(data))
-                        if approved:
-                            selection={'asset_id':approved['id'],'permission_confirmed':True,
-                                       'approval_scope':'configured_catalog'}
-                            data['media_selection']=selection
-                    except MediaError:
+                        selection=select_automatic_photo(settings,row,data,extracted['issues'],db)
+                    except Exception as exc:
                         selection=None
-                    if not selection:
+                        data['media_diagnostic']=safe_error(exc,'media')
+                        data['media_decision']={'policy':settings.media_auto_use_policy,
+                            'status':'not_selected','reason':'MEDIA_ENRICHMENT_FAILED'}
                         data['hero_asset']='premium-institutional.svg'
                         extracted['issues'].append({'code':'MEDIA_INSTITUTIONAL','blocking':False,
-                            'message':'Arte institucional utilizada; nenhuma busca paga de foto foi solicitada.'})
+                            'message':'Busca de foto indisponível (MEDIA_ENRICHMENT_FAILED); arte institucional utilizada.'})
+                    if selection:
+                        data['media_selection']=selection
                 if not automatic and not selection and settings.media_mode=='search' and data['document_type']!='proposal':
                     try:
                         place=primary_place(data)
@@ -217,7 +215,9 @@ def process_claim(settings: Settings, row: dict) -> None:
                     try:
                         media_asset=MediaCatalog(settings,row['tenant_id']).load(selection['asset_id'])
                         data['photo_provenance']={**MediaCatalog.public(media_asset),
-                            'permission_confirmed':bool(selection.get('permission_confirmed'))}
+                            'permission_confirmed':bool(selection.get('permission_confirmed')),
+                            'approval_scope':selection.get('approval_scope','reviewer'),
+                            'use_policy':selection.get('use_policy')}
                     except MediaError as exc:
                         if not canonical: raise
                         selection=None; media_asset=None; data['hero_asset']='premium-institutional.svg' if automatic else None
@@ -281,7 +281,8 @@ def process_claim(settings: Settings, row: dict) -> None:
                 checks['original_download']=rendered.get('original_download',{'included':False})
                 if media_asset:
                     checks['photo']={k:data['photo_provenance'][k] for k in ('id','sha256','provider',
-                        'source_page_url','publisher','authority','rights_status','permission_confirmed')}
+                        'source_page_url','publisher','authority','rights_status','permission_confirmed',
+                        'approval_scope','use_policy')}
                     if not selection.get('permission_confirmed'):
                         issues.append({'code':'PHOTO_USAGE_REVIEW','blocking':True,
                             'message':'Fotografia disponível em rascunho. Confirmar autorização/licença de uso antes de liberar ao cliente.'})

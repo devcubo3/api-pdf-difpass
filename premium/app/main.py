@@ -130,6 +130,10 @@ class MediaSelection(Reprocess):
     permission_confirmed: bool = False
 
 
+class MediaRefresh(Reprocess):
+    allow_paid_search: bool = False
+
+
 class AccessLink(BaseModel):
     model_config = ConfigDict(extra='forbid')
     artifact: Literal['pdf', 'review_pdf', 'preview', 'page', 'source'] = 'pdf'
@@ -255,7 +259,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health():
         return {'status': 'ok', 'version': '2.0.0', 'render_mode':settings.render_mode,
                 'pipeline_version':settings.pipeline_version,'html_engine':settings.html_engine,
-                'review_policy':settings.review_policy}
+                'review_policy':settings.review_policy,'media_mode':settings.media_mode,
+                'media_auto_use_policy':settings.media_auto_use_policy}
 
     @api.get('/readyz')
     def ready():
@@ -483,7 +488,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409,'A revisão mudou durante a operação.') from None
         return {'revoked':count}
 
-    def new_revision(row, principal, reason, changes=None,*,reuse_understanding=False,fact_changes=None):
+    def new_revision(row, principal, reason, changes=None,*,reuse_understanding=False,fact_changes=None,action=None):
         if row['status'] not in {'needs_review', 'failed', 'ready'}:
             raise HTTPException(409, 'Aguarde o processamento terminar.')
         artifacts = row['artifacts_json']
@@ -502,7 +507,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data['overrides'] = {**data.get('overrides', {}), **(changes or {})}
         return update(row, status='queued', revision=row['revision']+1, attempt_count=0,
             data_json=data, artifacts_json={'history': history}, issues_json=[],
-            review_event={'subject':principal['subject'], 'action':'correct_facts' if fact_changes else ('correct' if changes else 'reprocess'),
+            review_event={'subject':principal['subject'], 'action':action or ('correct_facts' if fact_changes else ('correct' if changes else 'reprocess')),
                           'revision':row['revision'], 'details':{'reason':reason, 'changes':fact_changes or changes or {}}})
 
     @api.patch('/v2/documents/{document_id}/review', status_code=202)
@@ -658,6 +663,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             'purpose':'location_and_photo_reference','photo_import_enabled':False,
             'reason':'Importação de fotos Places para PDF permanente depende de configuração e validação de uso; nenhum conteúdo Google é armazenado.'},
             headers={'Cache-Control':'private, no-store'})
+
+    @api.post('/v2/documents/{document_id}/media/refresh',status_code=202)
+    def refresh_media(document_id: str,body: MediaRefresh,
+            if_match: str | None=Header(None,alias='If-Match'),principal=Depends(require('review'))):
+        row=document(document_id,principal)
+        precondition(row,if_match)
+        if (settings.render_mode!='html_template' or settings.media_mode!='search'
+                or settings.media_auto_use_policy!='matched_sources'
+                or row['data_json'].get('pipeline_version')!='canonical_v1'
+                or not row['data_json'].get('understanding_snapshot')):
+            raise HTTPException(409,'Atualização de foto exige busca automática configurada e leitura salva.')
+        data={**row['data_json'],'media_refresh_allow_paid':body.allow_paid_search}
+        for key in ('media_selection','photo_provenance','media_decision','media_search'):
+            data.pop(key,None)
+        changed=new_revision({**row,'data_json':data},principal,body.reason,
+                             reuse_understanding=True,action='refresh_media')
+        return JSONResponse(public(changed),status_code=202,headers={'ETag':etag(changed)})
 
     @api.post('/v2/documents/{document_id}/media/select')
     def media_select(document_id: str,body: MediaSelection,

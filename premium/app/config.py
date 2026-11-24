@@ -38,6 +38,7 @@ class Settings:
     media_search_reserve_usd: float = .05
     media_search_daily_budget_usd: float = .10
     media_auto_catalog_json: str = field(default='{}', repr=False)
+    media_auto_use_policy: str = 'approved_only'
     openai_text_model: str = 'gpt-6-luna'
     openai_image_model: str = 'gpt-image-2'
     openai_image_quality: str = 'high'
@@ -64,6 +65,8 @@ class Settings:
             raise ValueError('Invalid original download link lifetime')
         if self.media_mode not in {'brand','search'}:
             raise ValueError('media_mode must be brand or search')
+        if self.media_auto_use_policy not in {'approved_only','matched_sources'}:
+            raise ValueError('PDF_MEDIA_AUTO_USE_POLICY must be approved_only or matched_sources')
         if not .02 <= self.media_search_reserve_usd <= .20:
             raise ValueError('Invalid media search reservation')
         if not self.media_search_reserve_usd<=self.media_search_daily_budget_usd<=100:
@@ -186,6 +189,9 @@ class Settings:
             media_search_reserve_usd=float(os.getenv('PDF_MEDIA_SEARCH_RESERVE_USD','.05')),
             media_search_daily_budget_usd=float(os.getenv('PDF_MEDIA_SEARCH_DAILY_BUDGET_USD','.10')),
             media_auto_catalog_json=os.getenv('PDF_MEDIA_AUTO_CATALOG') or '{}',
+            media_auto_use_policy=os.getenv('PDF_MEDIA_AUTO_USE_POLICY') or (
+                'matched_sources' if os.getenv('PDF_REVIEW_POLICY','always')=='validated_auto'
+                and os.getenv('PDF_MEDIA_MODE','brand')=='search' else 'approved_only'),
             openai_text_model=os.getenv('OPENAI_TEXT_MODEL', 'gpt-6-luna'),
             openai_image_model=os.getenv('OPENAI_IMAGE_MODEL', 'gpt-image-2'),
             openai_image_quality=os.getenv('OPENAI_IMAGE_QUALITY','high'),

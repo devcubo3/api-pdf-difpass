@@ -60,4 +60,5 @@ def automatic_release_event(settings,storage,row,data,artifacts,issues):
         raise ReleaseBlocked('Não foi possível confirmar a integridade e o link de segurança.') from None
     return {'subject':'system:validated-auto','action':'automatic_release','revision':row['revision'],
             'details':{'policy':'validated_auto','artifact_sha256':artifacts['sha256'],
-                       'source_sha256':row['source_sha'],'decision':'validated'}}
+                       'source_sha256':row['source_sha'],'decision':'validated',
+                       'media_decision':data.get('media_decision')}}
