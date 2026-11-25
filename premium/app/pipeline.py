@@ -18,7 +18,7 @@ from .storage import Storage
 from .extraction import extract_document, pixel_hash
 from .rendering import render_document
 from .ai_images import ImagePipeline, AIError
-from .ai_budget import BudgetLedger
+from .ai_budget import BudgetLedger,SerpApiLedger
 from .html_rendering import render_html_document
 from .media import MediaCatalog,PhotoSearch,choose_candidate
 from .media_fetch import MediaError
@@ -263,6 +263,7 @@ def process_claim(settings: Settings, row: dict) -> None:
                 checks['canonical']=data['canonical_validation']
                 checks['pipeline_version']='canonical_v1'
             checks['ai_usage'] = rendered['ai_usage']
+            checks['saas_usage']=SerpApiLedger(db,row).summary()
             checks['ai_cache_hits']=rendered['ai_cache_hits']
             if settings.render_mode == 'openai_images':
                 checks['image_text'] = rendered['image_text_checks']
@@ -335,6 +336,7 @@ def process_claim(settings: Settings, row: dict) -> None:
         try:
             failure_data=locals().get('data', {})
             failure_data['processing_stage']=stage
+            if getattr(exc,'budget_details',None):failure_data['budget_block']=exc.budget_details
             record_timing()
             if 'image_pipeline' in locals():
                 failure_data['ai_cached_calls']=image_pipeline.stage_keys
@@ -351,6 +353,7 @@ def process_claim(settings: Settings, row: dict) -> None:
                 artifacts_json={'history':row['artifacts_json'].get('history',{}),
                                 'checks':{'validations_passed':False,'render_mode':settings.render_mode,
                                           'ai_usage':BudgetLedger(db,row).summary(),
+                                          'saas_usage':SerpApiLedger(db,row).summary(),
                                           'blocking_issues':sum(bool(item.get('blocking')) for item in issues),
                                           'canonical':failure_data.get('canonical_validation'),
                                           **{key:details[key] for key in ('template_text','html_engine') if key in details}}})
@@ -372,7 +375,8 @@ def process_claim(settings: Settings, row: dict) -> None:
                                data_json=failure_data,
                                artifacts_json={'history':row['artifacts_json'].get('history',{}),
                                     'checks':{'validations_passed':False,'render_mode':settings.render_mode,
-                                              'ai_usage':BudgetLedger(db,row).summary()}},
+                                              'ai_usage':BudgetLedger(db,row).summary(),
+                                              'saas_usage':SerpApiLedger(db,row).summary()}},
                                issues_json=[{'code':'PROCESSING_FAILED','blocking':True,
                                              'message':'Falha no processamento. Consulte a operação.'}])
         except ConcurrentUpdate:

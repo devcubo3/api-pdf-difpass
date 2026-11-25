@@ -105,6 +105,20 @@ ai_calls = Table(
     Column('created_at', DateTime(timezone=True), nullable=False),
 )
 
+# Additive schema: SaaS credits never spend the AI dollar budget. Existing call
+# rows remain immutable evidence, including historical SerpApi reservations.
+saas_budget_windows=Table('saas_budget_windows',metadata,
+    Column('scope',String(120),primary_key=True),
+    Column('reserved_credits',Integer,nullable=False))
+ai_budget_grants=Table('ai_budget_grants',metadata,
+    Column('document_id',String(36),ForeignKey('documents.id'),primary_key=True),
+    Column('tenant_id',String(200),nullable=False),
+    Column('extra_microusd',Integer,nullable=False),
+    Column('subject',String(200),nullable=False),
+    Column('reason',Text,nullable=False),
+    Column('revision',Integer,nullable=False),
+    Column('created_at',DateTime(timezone=True),nullable=False))
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -291,6 +305,7 @@ class Database:
         self, document_id: str, tenant_id: str, expected_etag: int | None = None, **updates: Any,
     ) -> dict[str, Any] | None:
         review_event = updates.pop("review_event", None)
+        budget_grant = updates.pop('budget_grant',None)
         if not updates or set(updates) - self.MUTABLE:
             raise ValueError("Invalid document update fields")
         if "status" in updates and updates["status"] not in self.STATUSES:
@@ -313,6 +328,9 @@ class Database:
                 if exists is not None:
                     raise ConcurrentUpdate("Document was changed by another operation")
                 return None
+            if budget_grant is not None:
+                connection.execute(insert(ai_budget_grants).values(document_id=document_id,
+                    tenant_id=tenant_id,created_at=_now(),**budget_grant))
             if review_event is not None:
                 self._insert_review(connection, document_id, tenant_id, **review_event)
             return _document(connection.execute(select(documents).where(

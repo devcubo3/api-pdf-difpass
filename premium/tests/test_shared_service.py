@@ -31,7 +31,8 @@ def test_shared_credentials_are_private_and_select_html_without_postgres(tmp_pat
     assert 'PDF_PREMIUM_ENABLED=true' in content
     assert 'DATABASE_URL=sqlite:////app/var/state.sqlite3' in content
     assert 'PDF_RENDER_MODE=html_template' in content
-    assert 'PDF_AI_DOCUMENT_BUDGET_USD=0.15' in content
+    assert 'PDF_AI_DOCUMENT_BUDGET_USD=0.25' in content
+    assert 'PDF_AI_DAILY_BUDGET_USD=1.00' in content
     token_line = next(line for line in content.splitlines() if line.startswith('PDF_API_TOKENS='))
     tokens = json.loads(token_line.split('=', 1)[1].strip("'"))
     assert len(tokens) == 1 and next(iter(tokens)) not in run.stdout + run.stderr

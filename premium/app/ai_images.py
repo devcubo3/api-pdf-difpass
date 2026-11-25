@@ -26,6 +26,7 @@ import pytesseract
 from pydantic import BaseModel, ConfigDict
 
 from .ai_budget import BudgetLedger, AIBudgetError
+from .budget_pricing import PLAN_RESERVATION_USD
 from .rendering import _validate_codes
 from .storage import Storage
 from .media_context import PublicContext, MEDIA_PLANNING_INSTRUCTIONS
@@ -281,7 +282,7 @@ CONTEÚDO A DESENHAR:
 
 
 class ImagePipeline:
-    PLAN_ESTIMATE_USD = .10
+    PLAN_ESTIMATE_USD = PLAN_RESERVATION_USD
     PAGE_ESTIMATE_USD = .60
 
     def __init__(self, settings, db, row, client=None,cache_only=False,plan_cache_only=False):
@@ -312,8 +313,10 @@ class ImagePipeline:
                     raise AIError('AI_CACHE_REQUIRED','Reconstrução sem cobrança exige todas as respostas já em cache.')
             else:
                 existing = self.ledger.reserve(key, stage, model, estimate)
-        except AIBudgetError:
-            raise AIError('AI_BUDGET_LIMIT', 'Limite estimado de IA atingido; consulte a operação.') from None
+        except AIBudgetError as exc:
+            error=AIError('AI_BUDGET_LIMIT',exc.user_message)
+            error.budget_details=exc.details
+            raise error from None
         if existing:
             if (existing['status'] != 'completed' or not target.is_file()
                     or hashlib.sha256(target.read_bytes()).hexdigest() != existing['response_sha256']):
@@ -405,7 +408,10 @@ class ImagePipeline:
                                 'strict':True, 'schema':schema}})
             if response.status != 'completed' or not response.output_text:
                 raise AIError('AI_PLAN_INCOMPLETE', 'A leitura estruturada não foi concluída.')
-            return response.output_text.encode(), response.usage.model_dump() if response.usage else {}
+            usage=response.usage.model_dump() if response.usage else {}
+            usage.update(_response_model=getattr(response,'model',None),
+                         _service_tier=getattr(response,'service_tier',None))
+            return response.output_text.encode(),usage
         raw = self.request('plan', self.settings.openai_text_model, fingerprint, 'json',
                            self.PLAN_ESTIMATE_USD, perform)
         try:

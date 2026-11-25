@@ -85,7 +85,10 @@ def understand(planner,extracted,source):
                             'strict':True,'schema':schema}})
         if response.status!='completed' or not response.output_text:
             raise AIError('UNDERSTANDING_INCOMPLETE','Leitura incompleta/recusada; conferir limites e evidências antes de repetir.')
-        return response.output_text.encode(),response.usage.model_dump() if response.usage else {}
+        usage=response.usage.model_dump() if response.usage else {}
+        usage.update(_response_model=getattr(response,'model',None),
+                     _service_tier=getattr(response,'service_tier',None))
+        return response.output_text.encode(),usage
     raw=planner.request('plan',planner.settings.openai_text_model,digest,'json',planner.PLAN_ESTIMATE_USD,perform)
     try:
         result=Understanding.model_validate_json(raw)

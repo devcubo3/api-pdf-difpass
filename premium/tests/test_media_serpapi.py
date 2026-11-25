@@ -6,7 +6,7 @@ from urllib.parse import parse_qs,urlsplit
 import pytest
 
 from app import media_serpapi
-from app.ai_budget import BudgetLedger
+from app.ai_budget import BudgetLedger,SerpApiLedger
 from app.config import Settings
 from app.media import PhotoSearch
 from app.media_fetch import Fetched,MediaError
@@ -48,23 +48,28 @@ def test_one_search_is_budgeted_cached_and_does_not_save_debug_or_key(discovery_
     assert search.search(place)==results and len(client.calls)==1 and search.usage['cache_hit']
     raw=next(tmp_path.glob('serpapi-*.json')).read_text()
     assert 'synthetic-secret' not in raw and 'thumbnail' not in raw and 'raw_html_file' not in raw
-    assert BudgetLedger(db,row).summary()[0]['model']=='serpapi:google_images'
+    assert BudgetLedger(db,row).summary()==[]
+    assert SerpApiLedger(db,row).summary()[0]['reserved_credits']==1
     next(tmp_path.glob('serpapi-*.json')).write_text('tampered')
     with pytest.raises(MediaError,match='incerta'):
         search.search(place)
     assert len(client.calls)==1
 
 
-def test_cache_only_and_budget_block_credit_consumption(discovery_case,tmp_path):
+def test_cache_only_and_credit_limit_block_search_but_ai_budget_does_not(discovery_case,tmp_path):
     settings,db,row=discovery_case
     settings=replace(settings,serpapi_api_key='synthetic-secret')
     client=Client();search=SerpApiImages(settings,db,row,tmp_path,client=client,allow_paid=False)
     with pytest.raises(MediaError) as error: search.search({'name':'Unregistered Lodge'})
     assert error.value.code=='MEDIA_SEARCH_CACHE_REQUIRED' and client.calls==[]
     BudgetLedger(db,row).reserve('f'*64,'plan','synthetic',12)
+    search=SerpApiImages(settings,db,row,tmp_path,client=client)
+    assert search.search({'name':'Unregistered Lodge'}) and len(client.calls)==1
+    # Exhaust one independent SaaS credit; the AI balance is irrelevant.
+    db.settings=replace(settings,serpapi_daily_search_limit=1)
     with pytest.raises(MediaError) as error:
-        SerpApiImages(settings,db,row,tmp_path,client=client).search({'name':'Unregistered Lodge'})
-    assert error.value.code=='MEDIA_SEARCH_BUDGET' and client.calls==[]
+        SerpApiImages(settings,db,row,tmp_path,client=client).search({'name':'Different Lodge'})
+    assert error.value.code=='MEDIA_SERPAPI_CREDIT_LIMIT' and len(client.calls)==1
 
 
 def test_timeout_is_not_automatically_retried(discovery_case,tmp_path):

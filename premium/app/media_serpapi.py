@@ -1,10 +1,9 @@
 """One credited image lookup; no model calls, redirects or secret-bearing logs."""
 import hashlib
 import json
-from datetime import datetime,timezone
 from urllib.parse import urlencode
 
-from .ai_budget import BudgetLedger,AIBudgetError
+from .ai_budget import SerpApiLedger,AIBudgetError
 from .media_fetch import MediaError,PinnedHTTPS,public_addresses
 from .storage import Storage
 
@@ -78,23 +77,21 @@ class SerpApiImages:
         fingerprint=hashlib.sha256(json.dumps(params,sort_keys=True).encode()).hexdigest()
         key=hashlib.sha256(f'{self.row["id"]}:{self.row["revision"]}:serpapi-images-v1:{fingerprint}'.encode()).hexdigest()
         target=self.root/f'serpapi-{key}.json'
-        ledger=BudgetLedger(self.db,self.row)
+        ledger=SerpApiLedger(self.db,self.row)
         existing=ledger.cached(key)
         if not existing:
             if not self.allow_paid:
                 raise MediaError('MEDIA_SEARCH_CACHE_REQUIRED','Esta reconstrução não permite consumir um novo crédito de busca.')
             try:
-                day=datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                existing=ledger.reserve(key,'media_search','serpapi:google_images',self.settings.media_search_reserve_usd,
-                    extra_windows=[(f'media-day:{day}',self.settings.media_search_daily_budget_usd)])
+                existing=ledger.reserve(key)
             except AIBudgetError:
-                raise MediaError('MEDIA_SEARCH_BUDGET','Limite estimado de busca atingido.') from None
+                raise MediaError('MEDIA_SERPAPI_CREDIT_LIMIT','Cota de buscas SerpApi atingida; o orçamento de IA não foi consumido.') from None
         if existing:
             if (existing['status']!='completed' or not target.is_file()
                     or hashlib.sha256(target.read_bytes()).hexdigest()!=existing['response_sha256']):
                 raise MediaError('MEDIA_SEARCH_UNCERTAIN','Consulta anterior incerta; não repetir o consumo de créditos automaticamente.')
             self.usage={'provider':'serpapi','cache_hit':True,'new_calls':0,
-                        'reserved_estimate_usd':0,'usage':existing['usage_json']}
+                        'reserved_estimate_usd':0,'reserved_credits':0,'usage':existing['usage_json']}
             return json.loads(target.read_bytes())
         try:
             payload=(self.client or SerpApiClient(self.settings.serpapi_api_key)).get_json('/search.json',params)
@@ -105,7 +102,7 @@ class SerpApiImages:
                    'maximum_search_credits':1,'generative_ai_calls':0}
             ledger.finish(key,hashlib.sha256(raw).hexdigest(),usage)
             self.usage={'provider':'serpapi','cache_hit':False,'new_calls':1,
-                        'reserved_estimate_usd':self.settings.media_search_reserve_usd,'usage':usage}
+                        'reserved_estimate_usd':0,'reserved_credits':1,'usage':usage}
             return results
         except Exception as exc:
             ledger.uncertain(key)

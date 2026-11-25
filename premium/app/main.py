@@ -27,7 +27,7 @@ from .storage import Storage
 from .media import MediaCatalog,PhotoSearch,choose_candidate
 from .media_fetch import MediaError
 from .media_context import primary_place
-from .ai_budget import BudgetLedger
+from .ai_budget import BudgetLedger,SerpApiLedger
 from .legacy_download import validate_legacy_url
 from .document_schema import Evidence
 
@@ -261,7 +261,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 'pipeline_version':settings.pipeline_version,'html_engine':settings.html_engine,
                 'review_policy':settings.review_policy,'media_mode':settings.media_mode,
                 'media_auto_use_policy':settings.media_auto_use_policy,
-                'serpapi_configured':bool(settings.serpapi_api_key)}
+                'serpapi_configured':bool(settings.serpapi_api_key),
+                'budget_policy':'usage_and_credits_v2'}
 
     @api.get('/readyz')
     def ready():
@@ -389,7 +390,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({'document_id': document_id, 'revision': row['revision'], 'etag': etag(row),
             'artifact_sha256': row['artifacts_json'].get('sha256'), 'status': row['status'],
             'data': row['data_json'], 'issues': row['issues_json'],
-            'checks': row['artifacts_json'].get('checks', {}), 'events': db.reviews(document_id, row['tenant_id'])},
+            'checks': row['artifacts_json'].get('checks', {}), 'events': db.reviews(document_id, row['tenant_id']),
+            'budget':BudgetLedger(db,row).overview(),'saas_usage':SerpApiLedger(db,row).summary()},
             headers={'ETag': etag(row), 'Cache-Control': 'no-store'})
 
     @api.get('/v2/documents/{document_id}/review/generated-page/{page_number}.png')
@@ -489,7 +491,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409,'A revisão mudou durante a operação.') from None
         return {'revoked':count}
 
-    def new_revision(row, principal, reason, changes=None,*,reuse_understanding=False,fact_changes=None,action=None):
+    def new_revision(row, principal, reason, changes=None,*,reuse_understanding=False,fact_changes=None,action=None,budget_grant=None):
         if row['status'] not in {'needs_review', 'failed', 'ready'}:
             raise HTTPException(409, 'Aguarde o processamento terminar.')
         artifacts = row['artifacts_json']
@@ -500,6 +502,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data = dict(row['data_json'])
         data.pop('ai_cache_only',None)
         data.pop('ai_plan_cache_only',None)
+        data.pop('budget_block',None)
         if data.get('pipeline_version')=='canonical_v1':
             if reuse_understanding or changes:
                 data.update(ai_cache_only=True,ai_plan_cache_only=True)
@@ -507,9 +510,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 data.pop('understanding_snapshot',None)
         data['overrides'] = {**data.get('overrides', {}), **(changes or {})}
         return update(row, status='queued', revision=row['revision']+1, attempt_count=0,
-            data_json=data, artifacts_json={'history': history}, issues_json=[],
+            data_json=data, artifacts_json={'history': history}, issues_json=[],budget_grant=budget_grant,
             review_event={'subject':principal['subject'], 'action':action or ('correct_facts' if fact_changes else ('correct' if changes else 'reprocess')),
-                          'revision':row['revision'], 'details':{'reason':reason, 'changes':fact_changes or changes or {}}})
+                          'revision':row['revision'], 'details':{'reason':reason, 'changes':fact_changes or changes or {},
+                              'budget_authorization':budget_grant}})
 
     @api.patch('/v2/documents/{document_id}/review', status_code=202)
     def correct(document_id: str, body: Correction, if_match: str | None = Header(None, alias='If-Match'),
@@ -563,7 +567,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   principal=Depends(require('review'))):
         row = document(document_id, principal)
         precondition(row, if_match)
-        return public(new_revision(row, principal, body.reason))
+        grant=BudgetLedger(db,row).retry_grant(principal,body.reason)
+        reuse=bool(row['data_json'].get('understanding_snapshot')) and any(
+            i.get('code')=='AI_BUDGET_LIMIT' for i in row['issues_json'])
+        return public(new_revision(row,principal,body.reason,budget_grant=grant,reuse_understanding=reuse))
 
     @api.post('/v2/documents/{document_id}/continue',status_code=202)
     def continue_generation(document_id: str,body: Reprocess,
@@ -637,7 +644,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             'selection_policy':row['data_json'].get('media_context_policy'),
             'primary_place':primary_place(row['data_json']),
             'ai_usage':BudgetLedger(db,row).summary(),
-            'search_usage':[call for call in BudgetLedger(db,row).summary() if call['stage']=='media_search']},
+            'search_usage':[call for call in BudgetLedger(db,row).summary() if call['stage']=='media_search'],
+            'saas_usage':SerpApiLedger(db,row).summary()},
             headers={'Cache-Control':'private, no-store'})
 
     @api.get('/v2/documents/{document_id}/media/{asset_id}.jpg')

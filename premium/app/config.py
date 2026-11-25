@@ -48,6 +48,9 @@ class Settings:
     ai_request_timeout_seconds: int = 180
     ai_document_budget_usd: float = 12.0
     ai_daily_budget_usd: float = 24.0
+    ai_manual_retry_allowance_usd: float = .10
+    serpapi_daily_search_limit: int = 25
+    serpapi_monthly_search_limit: int = 250
     brand_dir: Path = Path(__file__).resolve().parents[1] / "assets" / "brand"
 
     def __post_init__(self) -> None:
@@ -107,6 +110,10 @@ class Settings:
             raise ValueError('Invalid AI page/timeout limit')
         if not 0.05 <= self.ai_document_budget_usd <= self.ai_daily_budget_usd <= 1000:
             raise ValueError('Invalid AI budget limits')
+        if not 0<=self.ai_manual_retry_allowance_usd<=1:
+            raise ValueError('Invalid manual document retry allowance')
+        if not 1<=self.serpapi_daily_search_limit<=self.serpapi_monthly_search_limit<=100_000:
+            raise ValueError('Invalid SerpApi credit limits')
         profiles={('gpt-image-2','high','1536x2176'),('gpt-image-2','medium','1024x1536'),
                   ('gpt-image-1-mini','medium','1024x1536')}
         if self.openai_text_model != 'gpt-6-luna' or (
@@ -202,5 +209,8 @@ class Settings:
             ai_request_timeout_seconds=int(os.getenv('PDF_AI_REQUEST_TIMEOUT_SECONDS', '180')),
             ai_document_budget_usd=float(os.getenv('PDF_AI_DOCUMENT_BUDGET_USD', '12')),
             ai_daily_budget_usd=float(os.getenv('PDF_AI_DAILY_BUDGET_USD', '24')),
+            ai_manual_retry_allowance_usd=float(os.getenv('PDF_AI_MANUAL_RETRY_ALLOWANCE_USD','.10')),
+            serpapi_daily_search_limit=int(os.getenv('PDF_SERPAPI_DAILY_SEARCH_LIMIT','25')),
+            serpapi_monthly_search_limit=int(os.getenv('PDF_SERPAPI_MONTHLY_SEARCH_LIMIT','250')),
             brand_dir=Path(os.getenv("PDF_BRAND_DIR", str(cls.__dataclass_fields__["brand_dir"].default))),
         )

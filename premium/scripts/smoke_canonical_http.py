@@ -31,6 +31,8 @@ def main():
     parser.add_argument('--shared-image', help='Exercise both APIs and the worker in this Docker image')
     parser.add_argument('--html-engine',choices=['chromium','weasyprint'],default='chromium')
     parser.add_argument('--review-policy',choices=['always','validated_auto'],default='always')
+    parser.add_argument('--budget-recovery',action='store_true',
+                        help='Simulate overload, a budget block and an explicit staff retry')
     parser.add_argument('--browser-channel',choices=['chrome','msedge','chromium'],
                         default='chrome' if os.name=='nt' else 'chromium')
     args=parser.parse_args()
@@ -55,7 +57,7 @@ def main():
         def log_message(self,*args): pass
         def do_POST(self):
             try:
-                assert self.path=='/v1/responses' and not provider_calls
+                assert self.path=='/v1/responses' and len(provider_calls)<(2 if args.budget_recovery else 1)
                 length=int(self.headers.get('Content-Length','0')); assert 0<length<2_000_000
                 body=json.loads(self.rfile.read(length))
                 assert body['text']['format']['name']=='difftravel_understanding_v1'
@@ -67,6 +69,11 @@ def main():
                     block=next(b for b in blocks if needle in b['text'])
                     return {'block_id':block['id'],'quote':block['text']}
                 provider_calls.append('local_test_double')
+                if args.budget_recovery and len(provider_calls)==1:
+                    raw=json.dumps({'error':{'code':'server_is_overloaded','message':'Synthetic overload'}}).encode()
+                    self.send_response(503);self.send_header('Content-Type','application/json')
+                    self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
+                    return
                 understanding={'schema_version':'canonical_v1','primary_place_id':None,'unreadable_code_pages':[],
                     'entities':[{'id':'driver','role':'person','name':'VIAJANTE SINTETICO','locality':None,
                                  'evidence':[ev('Condutor:')]}],
@@ -80,7 +87,7 @@ def main():
                     'conditions':[{'id':'terms','service_id':None,'kind':'general','evidence':[ev('Condicoes gerais:')]}],
                     'code_associations':[]}
                 payload={'id':'resp_synthetic','object':'response','created_at':int(time.time()),
-                    'model':'gpt-6-luna','status':'completed','output':[{'id':'msg_synthetic',
+                    'model':'gpt-6-luna','service_tier':'default','status':'completed','output':[{'id':'msg_synthetic',
                         'type':'message','role':'assistant','status':'completed','content':[
                             {'type':'output_text','text':json.dumps(understanding,ensure_ascii=False),'annotations':[]}]}],
                     'usage':{'input_tokens':0,'output_tokens':0,'total_tokens':0}}
@@ -106,6 +113,8 @@ def main():
         'PDF_REVIEW_POLICY':args.review_policy,
         'PDF_LEGACY_PDF_HOSTS':json.dumps({'synthetic':['files.example.test']}),
         'PDF_AI_DOCUMENT_BUDGET_USD':'0.20','PDF_AI_DAILY_BUDGET_USD':'0.20'})
+    if args.budget_recovery:
+        env.update(PDF_AI_DOCUMENT_BUDGET_USD='0.15',PDF_AI_DAILY_BUDGET_USD='1.00')
     processes=[]; logs=[]; shared=None
     def start(name,command,child_env):
         log=(output/(name+'.log')).open('wb'); logs.append(log)
@@ -146,6 +155,29 @@ def main():
                 if review['status'] not in {'queued','processing'}: break
                 if time.monotonic()>deadline: raise RuntimeError('Synthetic worker timeout; no retry')
                 time.sleep(.2)
+            if args.budget_recovery:
+                assert review['issues'][0]['code']=='OPENAI_SERVICE_UNAVAILABLE'
+                for attempt in (1,2):
+                    if worker:
+                        worker.wait(timeout=10);assert worker.returncode==0
+                    retry=client.post(route+'/reprocess',headers={'If-Match':review['etag']},
+                        json={'reason':f'Explicit synthetic staff retry {attempt}'})
+                    assert retry.status_code==202
+                    worker=None if shared else start(f'worker-retry-{attempt}',
+                        ['-m','app.worker','--once'],worker_env)
+                    deadline=time.monotonic()+90
+                    while True:
+                        review=client.get(route+'/review').json()
+                        if review['status'] not in {'queued','processing'}:break
+                        if time.monotonic()>deadline:raise RuntimeError('Budget recovery timeout; no retry')
+                        time.sleep(.2)
+                    if attempt==1:
+                        assert review['issues'][0]['code']=='AI_BUDGET_LIMIT'
+                        assert review['data']['budget_block']['scope']=='document'
+                        assert len(provider_calls)==1
+                assert review['budget']['manual_allowance_used']
+                assert review['budget']['day_limit_usd']==1
+                assert any(e['details'].get('budget_authorization') for e in review['events'])
             assert review['checks'].get('validations_passed'),[x['code'] for x in review['issues']]
             assert review['checks']['html_engine']==args.html_engine
             assert review['data']['document_type']=='car_rental'
@@ -162,12 +194,12 @@ def main():
                 assert delivered.status_code==200 and delivered.content==artifact.content
             else:
                 assert review['status']=='needs_review' and delivered.status_code==409
-            assert len(provider_calls)==1
+            assert len(provider_calls)==(2 if args.budget_recovery else 1)
             if worker:
                 worker.wait(timeout=10); assert worker.returncode==0
             if shared:
                 shared.verify_recovery(client,base,route.removeprefix(base),review['artifact_sha256'])
-                assert len(provider_calls)==1
+                assert len(provider_calls)==(2 if args.budget_recovery else 1)
             report={'kind':'synthetic-http-smoke','generation':'api-and-separate-worker',
                 'provider':'local_test_double','real_provider_calls':0,'local_premium_pdf_generation':False,
                 'human_approval_performed':False,'review_policy':args.review_policy,
@@ -176,6 +208,8 @@ def main():
                 'document_type':'car_rental','pages':review['checks']['rendered_pages'],
                 'artifact_sha256':review['artifact_sha256'],'checks':review['checks'],
                 'issues':review['issues'],'test_double_requests':len(provider_calls),
+                'budget_recovery_verified':args.budget_recovery,
+                'budget':review['budget'],
                 'single_service':bool(shared),'restart_preserved_artifact':bool(shared)}
             (output/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
             print(json.dumps({'result':'passed','provider':'local_test_double','real_provider_calls':0,
