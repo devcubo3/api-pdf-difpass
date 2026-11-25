@@ -3,6 +3,7 @@ import os
 import io
 import tempfile
 import shutil
+import math
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 from typing import Optional
@@ -12,6 +13,51 @@ app = FastAPI(
     title="PDF Shell Generator API",
     description="API to create a PDF 'shell' with custom header elements and insert a PDF document into it."
 )
+
+def safe_content_bounds(page):
+    """Find a safe viewport in empty margins, preserving all drawing bounds.
+
+    Include images, barcodes, fine print and vector marks, not just text.
+    Rotation, nonstandard page boxes and annotations retain full-page placement.
+    Full-page images/backgrounds deliberately prevent automatic trimming.
+    """
+    full = page.rect
+    try:
+        if (page.rotation or page.cropbox != page.mediabox
+                or page.first_annot is not None or page.first_widget is not None):
+            return full
+        ink = fitz.Rect()
+        for entry in page.get_bboxlog():
+            box = entry[1]
+            if not all(math.isfinite(value) for value in box):
+                return full
+            visible = fitz.Rect(box) & full
+            if not visible.is_empty:
+                ink |= visible
+        if ink.is_empty or ink.is_infinite:
+            return full
+        padded = (ink + (-12, -12, 12, 12)) & full
+        # Keep at least 1 / 1.3 of each dimension, including sparse pages.
+        width = max(padded.width, full.width / 1.3)
+        height = max(padded.height, full.height / 1.3)
+        left = min(max(full.x0, (padded.x0 + padded.x1 - width) / 2), full.x1 - width)
+        top = min(max(full.y0, (padded.y0 + padded.y1 - height) / 2), full.y1 - height)
+        return fitz.Rect(left, top, left + width, top + height)
+    except Exception:
+        # Optional optimization must never hide content when bounds are uncertain.
+        return full
+
+
+def content_placement_rect(page, frame):
+    """Fit the safe viewport while embedding the entire original page unclipped."""
+    bounds = safe_content_bounds(page)
+    if bounds == page.rect:
+        return frame
+    scale = min(frame.width / bounds.width, frame.height / bounds.height)
+    left = frame.x0 + (frame.width - bounds.width * scale) / 2 - bounds.x0 * scale
+    top = frame.y0 + (frame.height - bounds.height * scale) / 2 - bounds.y0 * scale
+    return fitz.Rect(left, top, left + page.rect.width * scale, top + page.rect.height * scale)
+
 
 def create_pdf_shell_and_insert_content_core(
     input_pdf_path: str,
@@ -198,8 +244,12 @@ def create_pdf_shell_and_insert_content_core(
         new_page.draw_rect(inner_rect, color=border_color, width=border_width)
         print(f"🔲 Borda desenhada: {inner_rect}")
 
-        # Insere a página do PDF original no retângulo calculado
-        new_page.show_pdf_page(inner_rect, input_doc, page_num)
+        # Fit proven empty margins by positioning the ENTIRE original page.
+        # Do not use source clipping: all original vectors/data remain embedded.
+        # Empty source pages still receive the shell and keep their page number.
+        if input_page.get_contents():
+            new_page.show_pdf_page(content_placement_rect(input_page, inner_rect),
+                                   input_doc, page_num, keep_proportion=True)
         print(f"✅ Conteúdo da página {page_num + 1} inserido")
 
     pdf_buffer = io.BytesIO()
